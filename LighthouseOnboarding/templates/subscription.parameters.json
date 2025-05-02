@@ -1,0 +1,28 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "mspOfferName": {
+        "value": "<name of the arm-deploymet>"
+      },
+      "mspOfferDescription": {
+        "value": "<description of arm-deployment>"
+      },
+      "managedByTenantId": {
+        "value": "<tenant id for management tenant>"
+      },
+      "authorizations": {
+        "value": [
+          {
+            "principalId":            "<object id for entra id group>",
+            "roleDefinitionId":       "<rbac role id>",
+            "principalIdDisplayName": "<display name of entra id group>"
+          }
+        ]
+      }
+    }
+  }
+  
+
+
+

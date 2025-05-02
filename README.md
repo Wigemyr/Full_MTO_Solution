@@ -56,7 +56,7 @@ Before running the script, make sure to **manually edit `guestInvitation.csv`** 
 > 📂 Navigate to the folder where the `accessPackageWithPIMGroup.ps1` script is located before running the command below.
 
 ```powershell
-cd ./AccessPackageWithPIMGroup
+cd ./AccessPackageCreation
 ./accessPackageWithPIMGroup.ps1 -pathToCSV "C:\path\to\guests.csv"
 ```
 
