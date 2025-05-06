@@ -1,6 +1,6 @@
 <#
 Author          : Bakken, Anders Wigemyr
-Date            : 26-03-2025
+Date            : 05-05-2025
 Version         : 1.0
 Description     : Automates the following steps:
                 1. Validates PowerShell version (requires 7+)
@@ -19,7 +19,6 @@ Script execution: accessPackageWithPIMGroup.ps1 -pathToCSV "C:\path\to\guests.cs
 Attachements    : guestInvitation.csv (sample CSV file with guest details)
 
 #>
-
 
 
 
@@ -46,6 +45,9 @@ $groupName = "PIM - Security Admin Group" # Name for the PIM-enabled group
 $groupDescription = "PIM-enabled group for Security Administrator role assignment" # Description for the group
 $roleDisplayName = "Security Administrator" # Role to be assigned to the group
 
+# Hardcoded employeeId
+$expectedEmployeeId = "n38fy345gf54" # Example employeeId to be assigned to users
+
 # Access Package-related variables
 $catalogName = "Test Catalog" # Example name for the access package catalog
 $accessPackageName = "Test Access Package" # Example name for the access package
@@ -63,6 +65,53 @@ $retryDelaySeconds = 5 # Delay between retries in seconds
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Spinner helper (v2 — erases its own line, no “Done.”)
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+function Invoke-WithSpinner {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ScriptBlock]$ScriptBlock,
+
+        # minimum spin time in milliseconds (0 = no forced extra)
+        [int]$MinimumMilliseconds = 0,
+
+        # time between frames
+        [int]$FrameDelayMs = 100
+    )
+
+    # start the work in a thread job
+    $job     = Start-ThreadJob -ScriptBlock $ScriptBlock
+    $frames  = @('|','/','-','\')
+    $i       = 0
+    $start   = Get-Date
+
+    while ($true) {
+        # draw a frame
+        Write-Host -NoNewline ("`r{0} Loading..." -f $frames[$i % $frames.Count])
+        $i++
+
+        # compute elapsed
+        $elapsedMs = ((Get-Date) - $start).TotalMilliseconds
+
+        # if the work is done AND we've hit the minimum, break out **before** sleeping
+        if ($job.State -ne 'Running' -and $elapsedMs -ge $MinimumMilliseconds) {
+            break
+        }
+
+        # otherwise pause between frames
+        Start-Sleep -Milliseconds $FrameDelayMs
+    }
+
+    # clear that line
+    Write-Host "`r[2K" -NoNewline
+
+    # return job output
+    return Receive-Job -Job $job -Wait -AutoRemoveJob
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # PowerShell Version Check (Requires 7+)
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -72,18 +121,18 @@ Write-Host "│                  CHECK POWERSHELL VERSION                  │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-
 Write-Host "[INFO] This script requires PowerShell 7 or later." -ForegroundColor Yellow
 
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host "[ERROR] You are running PowerShell $($PSVersionTable.PSVersion)." -ForegroundColor Red
-    Write-Host "[INFO] Please run this script using PowerShell 7 (e.g. 'pwsh.exe')." -ForegroundColor Yellow
-    exit 1
-} else {
-    Write-Host "[SUCCESS] PowerShell version $($PSVersionTable.PSVersion) detected. Continuing execution..." -ForegroundColor Green
-}
-
-start-sleep -Seconds 2
+# Wrap the version‐check pause in our spinner so it lasts at least 2 seconds:
+Invoke-WithSpinner -ScriptBlock {
+    if ($PSVersionTable.PSVersion.Major -lt 7) {
+        Write-Host "[ERROR] You are running PowerShell $($PSVersionTable.PSVersion)." -ForegroundColor Red
+        Write-Host "[INFO] Please run this script using PowerShell 7 (e.g. 'pwsh.exe')." -ForegroundColor Yellow
+        exit 1
+    } else {
+        Write-Host "[SUCCESS] PowerShell version $($PSVersionTable.PSVersion) detected. Continuing execution..." -ForegroundColor Green
+    }
+} -MinimumMilliseconds 1000
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -96,37 +145,34 @@ Write-Host "│              CHECK & INSTALL REQUIRED MODULES              │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# List of required modules
 $requiredModules = @("Microsoft.Graph")
 
 foreach ($module in $requiredModules) {
-    # Check if module is installed
-    $moduleInstalled = Get-Module -ListAvailable -Name $module
+    # 1) Always spin ≥2s while checking, using $using:module so it's not null:
+    $isInstalled = Invoke-WithSpinner -ScriptBlock {
+        # $using:module is injected into the background job
+        if (Get-Module -ListAvailable -Name $using:module) { $true } else { $false }
+    } -MinimumMilliseconds 1000
 
-    if ($moduleInstalled) {
+    if ($isInstalled) {
         Write-Host "[INFO] Module '$module' is already installed." -ForegroundColor Green
-    } else {
-        Write-Host "[INFO] Module '$module' not found. Installing..." -ForegroundColor Yellow
-
-        try {
-            Install-Module $module -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
-        } catch {
-            Write-Host "[ERROR] Failed to install module '$module': $_" -ForegroundColor Red
-            exit 1
-        }
-
-        # Verify installation
-        $moduleInstalled = Get-Module -ListAvailable -Name $module
-        if ($moduleInstalled) {
-            Write-Host "[SUCCESS] Module '$module' installed successfully!" -ForegroundColor Green
-        } else {
-            Write-Host "[ERROR] Module '$module' installation did not complete. Please install manually." -ForegroundColor Red
-            exit 1
-        }
+        continue
     }
-}
 
-start-sleep -Seconds 2
+    Write-Host "[WARNING] Module '$module' not found." -ForegroundColor Yellow
+    $ans = Read-Host "    Install '$module' now? (Y/N)"
+    if ($ans -notmatch '^[Yy]') {
+        Write-Host "[ERROR] Module '$module' is required. Exiting." -ForegroundColor Red
+        exit 1
+    }
+
+    # 2) Spin ≥2s while installing, again passing $using:module
+    Invoke-WithSpinner -ScriptBlock {
+        Install-Module $using:module -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+    } -MinimumMilliseconds 1000 | Out-Null
+
+    Write-Host "[SUCCESS] Module '$module' installed successfully!" -ForegroundColor Green
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,22 +185,27 @@ Write-Host "│                 CONNECT TO MICROSOFT GRAPH                 │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-
 Write-Host "[INFO] Connecting to Microsoft Graph..." -ForegroundColor Cyan
 
 try {
-    Connect-MgGraph -Scopes "Application.ReadWrite.All", "RoleManagement.ReadWrite.Directory", "EntitlementManagement.ReadWrite.All", "Group.ReadWrite.All" -ErrorAction Stop
+    # show spinner for at least 2 s while Connect-MgGraph runs
+    Invoke-WithSpinner -ScriptBlock {
+        Connect-MgGraph `
+            -Scopes "Application.ReadWrite.All", "RoleManagement.ReadWrite.Directory", `
+                    "EntitlementManagement.ReadWrite.All", "Group.ReadWrite.All" `
+            -ErrorAction Stop
+    } -MinimumMilliseconds 1000 | Out-Null
+
     Write-Host "[SUCCESS] Connected to Microsoft Graph." -ForegroundColor Green
 } catch {
     Write-Host "[ERROR] Failed to connect to Microsoft Graph: $_" -ForegroundColor Red
     exit 1
 }
 
-start-sleep -Seconds 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CECK IF USER IS GLOBAL ADMINISTRATOR
+# CHECK IF USER IS GLOBAL ADMINISTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -163,41 +214,44 @@ Write-Host "│            CHECK FOR CORRECT ROLE TO RUN SCRIPT            │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-
-# Required role
 $requiredRole = "Global Administrator"
+Write-Host "[INFO] Checking if user is '$requiredRole'..." -ForegroundColor Cyan
 
-# Get current signed-in user
-$currentUserUpn = (Get-MgContext).Account
-$currentUser = Get-MgUser -UserId $currentUserUpn
+# spin ≥2s while we grab context, user and role-membership info
+$authInfo = Invoke-WithSpinner -ScriptBlock {
+    $upn     = (Get-MgContext).Account
+    $user    = Get-MgUser -UserId $upn
+    $role    = Get-MgDirectoryRole -All | Where-Object { $_.DisplayName -eq $using:requiredRole }
+    $members = if ($role) { Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id -All } else { @() }
 
-# Get the enabled directory roles
-$directoryRoles = Get-MgDirectoryRole -All | Where-Object { $_.DisplayName -eq $requiredRole }
+    [pscustomobject]@{
+        UPN     = $upn
+        UserId  = $user.Id
+        Role    = $role
+        Members = $members
+    }
+} -MinimumMilliseconds 1000
 
-if (-not $directoryRoles) {
+# clear that spinner line
+Write-Host "`r[2K" -NoNewline
+
+# now evaluate
+if (-not $authInfo.Role) {
     Write-Host "[ERROR] The role '$requiredRole' is not enabled in your tenant." -ForegroundColor Red
     exit 1
 }
 
-# Get members of the role
-$roleId = $directoryRoles.Id
-$roleMembers = Get-MgDirectoryRoleMember -DirectoryRoleId $roleId -All
-
-# Check if the current user is a member
-$isAuthorized = $roleMembers.Id -contains $currentUser.Id
-
-if (-not $isAuthorized) {
+$hasRole = $authInfo.Members.Id -contains $authInfo.UserId
+if (-not $hasRole) {
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Red
     Write-Host "   You must be a Global Administrator to run this script." -ForegroundColor Red
-    Write-Host "   Current user: $currentUserUpn" -ForegroundColor Yellow
+    Write-Host "   Current user: $($authInfo.UPN)" -ForegroundColor Yellow
     Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Red
     exit 1
 } else {
-    Write-Host "[SUCCESS] User '$currentUserUpn' is a Global Administrator." -ForegroundColor Green
+    Write-Host "[SUCCESS] User '$($authInfo.UPN)' is a Global Administrator." -ForegroundColor Green
 }
-
-start-sleep -Seconds 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -210,61 +264,84 @@ Write-Host "│               ADD PIM GROUP WITH ACTIVE ROLE               │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# Step 1: Check if group exists
-$pimGroup = Get-MgGroup -Filter "displayName eq '$groupName'"
+# (Make sure these are set before you run this block:)
+#   $groupName
+#   $groupDescription
+#   $roleDisplayName
+
+# --- Step 1: Check if the PIM group already exists (2 s spinner) ---
+$pimGroup = Invoke-WithSpinner -ScriptBlock {
+    Get-MgGroup -All | Where-Object DisplayName -eq $using:groupName
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
+
 if ($pimGroup) {
-    Write-Host "[INFO] PIM group '$groupName' already exists. Skipping creation." -ForegroundColor Yellow
-} else {
-    $pimGroup = New-MgGroup -DisplayName $groupName `
-                            -Description $groupDescription `
-                            -MailEnabled:$false `
-                            -MailNickname ("pimSecAdmin" + (Get-Random -Maximum 9999)) `
-                            -SecurityEnabled:$true `
-                            -IsAssignableToRole:$true `
-                            -Visibility "Private"
+    Write-Host "[INFO]    PIM group '$groupName' already exists. Skipping creation." -ForegroundColor Yellow
+}
+else {
+    # --- Step 1b: Create the group (2 s spinner) ---
+    $pimGroup = Invoke-WithSpinner -ScriptBlock {
+        New-MgGroup `
+            -DisplayName        $using:groupName `
+            -Description        $using:groupDescription `
+            -MailEnabled:$false `
+            -MailNickname       ("pimSecAdmin" + (Get-Random -Maximum 9999)) `
+            -SecurityEnabled:$true `
+            -IsAssignableToRole:$true `
+            -Visibility         "Private"
+    } -MinimumMilliseconds 1000
+
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[SUCCESS] Created PIM group: $($pimGroup.DisplayName)" -ForegroundColor Green
 }
 
-# Step 2: Find or enable the Security Administrator role
-$role = Get-MgDirectoryRole | Where-Object { $_.DisplayName -eq $roleDisplayName }
+# Extract the plain Id for threaded calls
+$pimGroupId = $pimGroup.Id
 
-# If not enabled, activate the directory role
-if (-not $role) {
-    $template = Get-MgDirectoryRoleTemplate | Where-Object { $_.DisplayName -eq $roleDisplayName }
-
-    if ($template) {
-        Write-Host "[INFO] Enabling role from template: $($template.DisplayName)" -ForegroundColor Yellow
-        Enable-MgDirectoryRole -RoleTemplateId $template.Id | Out-Null
+# --- Step 2: Find or enable the Security Administrator role (2 s spinner) ---
+$role = Invoke-WithSpinner -ScriptBlock {
+    $r = Get-MgDirectoryRole | Where-Object DisplayName -eq $using:roleDisplayName
+    if (-not $r) {
+        $t = Get-MgDirectoryRoleTemplate | Where-Object DisplayName -eq $using:roleDisplayName
+        if ($t) { Enable-MgDirectoryRole -RoleTemplateId $t.Id | Out-Null }
         Start-Sleep -Seconds 5
-        $role = Get-MgDirectoryRole | Where-Object { $_.DisplayName -eq $roleDisplayName }
-    } else {
-        Write-Host "[ERROR] Could not find template for role '$roleDisplayName'" -ForegroundColor Red
-        exit 1
+        $r = Get-MgDirectoryRole | Where-Object DisplayName -eq $using:roleDisplayName
     }
+    return $r
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
+
+if (-not $role) {
+    Write-Host "[ERROR] Could not find or enable role '$roleDisplayName'." -ForegroundColor Red
+    exit 1
 }
 
+# Extract the plain Id for threaded calls
+$roleId = $role.Id
 
-# Step 3: Check if group is already a member of the role
-$existingMembers = Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id -All
-$alreadyAssigned = $existingMembers.Id -contains $pimGroup.Id
+# --- Step 3: Assign the group if not already a member (2 s spinner) ---
+$alreadyAssigned = Invoke-WithSpinner -ScriptBlock {
+    (Get-MgDirectoryRoleMember -DirectoryRoleId $using:roleId -All).Id -contains $using:pimGroupId
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
 
 if ($alreadyAssigned) {
-    Write-Host "[INFO] Group is already assigned to the '$roleDisplayName' role. Skipping..." -ForegroundColor Yellow
-} else {
-    $refBody = @{
-        "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$($pimGroup.Id)"
-    }
+    Write-Host "[INFO]    Group '$groupName' is already assigned to '$roleDisplayName'. Skipping..." -ForegroundColor Yellow
+}
+else {
+    # --- Step 3b: Perform the assignment (2 s spinner) ---
+    Invoke-WithSpinner -ScriptBlock {
+        $body = @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$using:pimGroupId" }
+        New-MgDirectoryRoleMemberByRef -DirectoryRoleId $using:roleId -BodyParameter $body
+    } -MinimumMilliseconds 1000 | Out-Null
 
-    try {
-        New-MgDirectoryRoleMemberByRef -DirectoryRoleId $role.Id -BodyParameter $refBody
-        Write-Host "[SUCCESS] Assigned role '$roleDisplayName' to group: $($pimGroup.DisplayName)" -ForegroundColor Green
-    } catch {
-        Write-Host "[ERROR] Failed to assign group to role: $($_.Exception.Message)" -ForegroundColor Red
-    }
+    Write-Host "`r[2K" -NoNewline
+    Write-Host "[SUCCESS] Assigned role '$roleDisplayName' to group: $groupName" -ForegroundColor Green
 }
 
 
-Start-Sleep -Seconds 2
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -277,68 +354,70 @@ Write-Host "│             INVITE GUEST USER FROM MAIN TENANT             │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-Write-Host "Starting invitation process ..." -ForegroundColor Cyan
+Write-Host "[INFO] Starting invitation process..." -ForegroundColor Cyan
 
+# Load the CSV normally—this is usually fast, so no spinner here
 $guestList = Import-Csv -Path $pathToCSV
 
 # Prepare results array
 $results = @()
 
 foreach ($guest in $guestList) {
-    $displayName = $guest.DisplayName
+    $displayName    = $guest.DisplayName
     $mainAdminEmail = $guest.Email
-    $employeeId = $guest.EmployeeId
+    $employeeId     = $guest.EmployeeId
 
-    # Check if guest already exists using the 'mail' property
-    try {
-        $existingGuest = Get-MgUser -Filter "mail eq '$mainAdminEmail'" -ConsistencyLevel eventual -ErrorAction Stop
-    } catch {
-        Write-Host "[ERROR] Failed to query mail '$mainAdminEmail': $_" -ForegroundColor Red
-        continue
-    }
+    # --- Check if the guest exists (1s spinner) ---
+    $existingGuest = Invoke-WithSpinner -ScriptBlock {
+        Get-MgUser -Filter "mail eq '$using:mainAdminEmail'" -ConsistencyLevel eventual -ErrorAction Stop
+    } -MinimumMilliseconds 1000
+    # clear spinner line
+    Write-Host "`r[2K" -NoNewline
 
     if ($existingGuest) {
-        # Log that the user already exists and skip
         $results += [PSCustomObject]@{
             "User Principal Name" = $mainAdminEmail
             "Object ID"           = $existingGuest.Id
-            "Status"              = "Guest already exists. Skipping invitation ..."
+            "Status"              = "Guest already exists. Skipping invitation."
         }
         continue
+    }
+
+    # --- Invite the guest (1s spinner) ---
+    $invitation = Invoke-WithSpinner -ScriptBlock {
+        New-MgInvitation `
+            -InvitedUserDisplayName    $using:displayName `
+            -InvitedUserEmailAddress   $using:mainAdminEmail `
+            -InviteRedirectUrl         "https://myapplications.microsoft.com" `
+            -SendInvitationMessage:$true
+    } -MinimumMilliseconds 1000
+    # clear spinner line
+    Write-Host "`r[2K" -NoNewline
+
+    if ($invitation) {
+        $results += [PSCustomObject]@{
+            "User Principal Name" = $mainAdminEmail
+            "Object ID"           = $invitation.InvitedUser.Id
+            "Status"              = "Invitation sent, and user created."
+        }
     } else {
-        # Invite the guest user
-        try {
-            $invitation = New-MgInvitation -InvitedUserDisplayName $displayName `
-                                           -InvitedUserEmailAddress $mainAdminEmail `
-                                           -InviteRedirectUrl "https://myapplications.microsoft.com" `
-                                           -SendInvitationMessage:$true
-
-            $guestId = $invitation.InvitedUser.Id
-
-            # Log the invited user
-            $results += [PSCustomObject]@{
-                "User Principal Name" = $mainAdminEmail
-                "Object ID"           = $guestId
-                "Status"              = "Invitation sent, and user created."
-            }
-        } catch {
-            $results += [PSCustomObject]@{
-                "User Principal Name" = $mainAdminEmail
-                "Object ID"           = "N/A"
-                "Status"              = "Failed to invite: $($_.Exception.Message)"
-            }
+        $results += [PSCustomObject]@{
+            "User Principal Name" = $mainAdminEmail
+            "Object ID"           = "N/A"
+            "Status"              = "Failed to invite."
         }
     }
 }
 
-# Display results in a formatted table with wider column spacing
+# Display results
 Write-Host ""
 $results | Format-Table `
-    @{Label = "User Principal Name"; Expression = { $_."User Principal Name".PadRight(50) } }, `
-    @{Label = "Object ID"; Expression = { $_."Object ID".PadRight(40) } }, `
-    @{Label = "Status"; Expression = { $_."Status".PadRight(60) } } -AutoSize
+    @{Label="User Principal Name"; Expression={$_. "User Principal Name".PadRight(50)} }, `
+    @{Label="Object ID";           Expression={$_. "Object ID".PadRight(40)} }, `
+    @{Label="Status";              Expression={$_. "Status".PadRight(60)} } -AutoSize
 
-Start-Sleep -Seconds 5
+Start-Sleep -Seconds 2
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -351,34 +430,30 @@ Write-Host "│              ADD STRING TO EMPLOYEE ID FILTER              │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# Hardcoded employeeId
-$expectedEmployeeId = "n38fy345gf54"
-
 # Import users from CSV
-$users = Import-Csv -Path $pathToCSV
-
-# Prepare results array
+$users   = Import-Csv -Path $pathToCSV
 $results = @()
 
 foreach ($user in $users) {
     $displayName = $user.DisplayName
-    $email = $user.Email
-    $employeeIdStatus = "Unknown"
+    $email       = $user.Email
 
     Write-Host "`nProcessing $email ..." -ForegroundColor Cyan
 
+    # --- Step A: Find the user (spinner only while the call runs, min 1s) ---
     $guest = $null
-    # Retry logic to find the user
     for ($attempt = 1; $attempt -le $retryCount; $attempt++) {
         try {
-            $guest = Get-MgUser -Filter "mail eq '$email'" -ConsistencyLevel eventual
-            if ($guest) {
-                break
-            } else {
-                Write-Host "[INFO] User not found yet (Attempt $attempt/$retryCount). Retrying in $retryDelaySeconds seconds..." -ForegroundColor Yellow
-                Start-Sleep -Seconds $retryDelaySeconds
-            }
+            $guest = Invoke-WithSpinner -ScriptBlock {
+                Get-MgUser -Filter "mail eq '$using:email'" -ConsistencyLevel eventual -ErrorAction Stop
+            } -MinimumMilliseconds 1000
+            Write-Host "`r[2K" -NoNewline
+
+            if ($guest) { break }
+            Write-Host "[INFO] User not found yet (Attempt $attempt/$retryCount)." -ForegroundColor Yellow
+            Start-Sleep -Seconds $retryDelaySeconds
         } catch {
+            Write-Host "`r[2K" -NoNewline
             Write-Host "[ERROR] Exception querying user: $_" -ForegroundColor Red
             break
         }
@@ -398,38 +473,48 @@ foreach ($user in $users) {
     $guestId = $guest.Id
 
     try {
-        # Fetch current employeeId
-        $currentEmployeeId = (Get-MgUser -UserId $guestId -Property "employeeId" | Select-Object -ExpandProperty employeeId)
+        # --- Step B: Fetch current employeeId (spinner only while the call runs, min 1s) ---
+        $currentEmployeeId = Invoke-WithSpinner -ScriptBlock {
+            Get-MgUser -UserId $using:guestId -Property "employeeId" |
+                Select-Object -ExpandProperty employeeId
+        } -MinimumMilliseconds 1000
+        Write-Host "`r[2K" -NoNewline
 
         if ($currentEmployeeId -eq $expectedEmployeeId) {
-            $employeeIdStatus = "Already correct"
+            $status = "Already correct"
             Write-Host "[INFO] Skipping update – employeeId already set to $expectedEmployeeId" -ForegroundColor Yellow
         } else {
-            # Update employeeId
-            Update-MgUser -UserId $guestId -BodyParameter @{ employeeId = $expectedEmployeeId }
+            # --- Step C: Update employeeId (spinner only while the call runs, min 1s) ---
+            Invoke-WithSpinner -ScriptBlock {
+                Update-MgUser -UserId $using:guestId -BodyParameter @{ employeeId = $using:expectedEmployeeId }
+            } -MinimumMilliseconds 1000 | Out-Null
+            Write-Host "`r[2K" -NoNewline
 
-            # Verify the update with a short delay
-            Start-Sleep -Seconds 2
-            $updatedEmployeeId = (Get-MgUser -UserId $guestId -Property "employeeId" | Select-Object -ExpandProperty employeeId)
+            # --- Step D: Verify update (spinner only while the call runs, min 1s) ---
+            $updatedEmployeeId = Invoke-WithSpinner -ScriptBlock {
+                Get-MgUser -UserId $using:guestId -Property "employeeId" |
+                    Select-Object -ExpandProperty employeeId
+            } -MinimumMilliseconds 1000
+            Write-Host "`r[2K" -NoNewline
 
             if ($updatedEmployeeId -eq $expectedEmployeeId) {
-                $employeeIdStatus = "Updated to $expectedEmployeeId"
+                $status = "Updated to $expectedEmployeeId"
                 Write-Host "[SUCCESS] Updated employeeId to $expectedEmployeeId for $email" -ForegroundColor Green
             } else {
-                $employeeIdStatus = "Update failed"
+                $status = "Update failed"
                 Write-Host "[WARNING] employeeId not updated for $email" -ForegroundColor Yellow
             }
         }
 
-        # Add result to array
+        # Log result
         $results += [PSCustomObject]@{
             DisplayName      = $displayName
             Email            = $email
-            EmployeeIdStatus = $employeeIdStatus
-            OverallStatus    = switch ($employeeIdStatus) {
-                { $_ -match 'Updated' }        { '✅ Success' }
-                { $_ -match 'Already correct'} { '⚠️ No action needed' }
-                default                        { '❌ Failed' }
+            EmployeeIdStatus = $status
+            OverallStatus    = switch ($status) {
+                { $_ -match 'Updated' }         { '✅ Success' }
+                { $_ -match 'Already correct'}  { '⚠️ No action needed' }
+                Default                         { '❌ Failed' }
             }
         }
     }
@@ -444,20 +529,19 @@ foreach ($user in $users) {
     }
 }
 
-# Output summary table with wider spacing between columns
+# Display summary table
 Write-Host ""
 $results | Format-Table `
-@{Label = "DisplayName"; Expression = { $_.DisplayName.PadRight(35) } },
-@{Label = "Email"; Expression = { $_.Email.PadRight(55) } },
-@{Label = "Employee ID Status"; Expression = { $_.EmployeeIdStatus.PadRight(30) } },
-@{Label = "Overall Status"; Expression = { $_.OverallStatus } }
+    @{Label="DisplayName";           Expression={ $_.DisplayName.PadRight(35) }}, `
+    @{Label="Email";                 Expression={ $_.Email.PadRight(55) }}, `
+    @{Label="Employee ID Status";    Expression={ $_.EmployeeIdStatus.PadRight(30) }}, `
+    @{Label="Overall Status";        Expression={ $_.OverallStatus } }
 
 
-start-sleep -Seconds 2
 
-# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # IMPORTANT MESSAGE BEFORE PROCEEDING
-# ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
 Write-Host "┌────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
@@ -474,8 +558,9 @@ Write-Host "           This is expected behavior — do not troubleshoot.       
 Write-Host "══════════════════════════════════════════════════════════════════════"  -ForegroundColor DarkYellow
 Write-Host ""
 
+# instead of Start-Sleep, prompt the user to continue when they're done reading
+Read-Host -Prompt "Press Enter to proceed"
 
-start-sleep -Seconds 7
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -490,13 +575,20 @@ Write-Host ""
 
 Write-Host "[INFO] Checking for existing Access Package Catalog: '$catalogName'..." -ForegroundColor Cyan
 
-$allCatalogs = Get-MgEntitlementManagementCatalog
-$existingCatalog = $allCatalogs | Where-Object { $_.DisplayName -eq $catalogName }
+# --- Spinner while fetching catalogs ---
+$allCatalogs = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementCatalog -All
+} -MinimumMilliseconds 1000
+# clear spinner line
+Write-Host "`r[2K" -NoNewline
+
+$existingCatalog = $allCatalogs | Where-Object DisplayName -eq $catalogName
 
 if ($existingCatalog) {
     $catalogId = $existingCatalog.Id
     Write-Host "[SUCCESS] Found existing Access Package Catalog: '$catalogName' (ID: $catalogId)" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "[INFO] No catalog found. Creating a new catalog: '$catalogName'..." -ForegroundColor Yellow
 
     $catalogBody = @{
@@ -505,13 +597,17 @@ if ($existingCatalog) {
         IsExternallyVisible = $false
     }
 
-    # Create the catalog
-    $newCatalog = New-MgEntitlementManagementCatalog -BodyParameter $catalogBody
+    # --- Spinner while creating catalog ---
+    $newCatalog = Invoke-WithSpinner -ScriptBlock {
+        New-MgEntitlementManagementCatalog -BodyParameter $using:catalogBody
+    } -MinimumMilliseconds 1000
+    # clear spinner line
+    Write-Host "`r[2K" -NoNewline
+
     $catalogId = $newCatalog.Id
     Write-Host "[SUCCESS] Created catalog '$catalogName'. ID: $catalogId" -ForegroundColor Green
 }
 
-Start-Sleep -Seconds 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -524,39 +620,48 @@ Write-Host "│               CREATE OR FIND ACCESS PACKAGE                │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-
 Write-Host "[INFO] Checking for existing Access Package: '$accessPackageName'..." -ForegroundColor Cyan
 
-$existingPackage = Get-MgEntitlementManagementAccessPackage -Filter "displayName eq '$accessPackageName'" | Select-Object -First 1
+# --- Spinner while fetching all packages, then filter client-side ---
+$allPackages = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementAccessPackage -All
+} -MinimumMilliseconds 1000
+# clear spinner line
+Write-Host "`r[2K" -NoNewline
+
+$existingPackage = $allPackages |
+    Where-Object DisplayName -eq $accessPackageName |
+    Select-Object -First 1
 
 if ($existingPackage) {
     $accessPackageId = $existingPackage.Id
     Write-Host "[SUCCESS] Found existing Access Package: '$accessPackageName' (ID: $accessPackageId)" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "[INFO] Creating new Access Package: '$accessPackageName'..." -ForegroundColor Yellow
 
     $params = @{
         displayName = $accessPackageName
         description = $accessPackageDescription
-        isHidden = $false
-        catalog = @{
-            id = $catalogId
-        }
+        isHidden    = $false
+        catalog     = @{ id = $catalogId }
     }
 
-    # Create the Access Package
-    $accessPackage = New-MgEntitlementManagementAccessPackage -BodyParameter $params
+    # --- Spinner while creating the package ---
+    $accessPackage = Invoke-WithSpinner -ScriptBlock {
+        New-MgEntitlementManagementAccessPackage -BodyParameter $using:params
+    } -MinimumMilliseconds 1000
+    # clear spinner line
+    Write-Host "`r[2K" -NoNewline
+
     $accessPackageId = $accessPackage.Id
     Write-Host "[SUCCESS] Created Access Package: '$accessPackageName' (ID: $accessPackageId)" -ForegroundColor Green
 }
-
-Start-Sleep -Seconds 2
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ADD PIM GROUP WITH ROLE TO CATALOG
 # ──────────────────────────────────────────────────────────────────────────────
-
 
 Write-Host ""
 Write-Host "┌────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
@@ -564,52 +669,48 @@ Write-Host "│             ADD PIM GROUP WITH ROLE TO CATALOG             │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# Variables (update with your actual values)
-$CatalogId = $catalogId         # Example: "db4859bf-43c3-49fa-ab13-8036bd333ebe"
-$GroupObjectId = $pimGroup.Id # Example: "b3b3b3b3-3b3b-3b3b-3b3b-3b3b3b3b3b3b"
 
-# Check if group is already added to catalog
-$existingResource = Get-MgEntitlementManagementCatalogResource `
-    -AccessPackageCatalogId $CatalogId `
-    -Filter "originId eq '$GroupObjectId' and originSystem eq 'AadGroup'"
+$GroupObjectId = $pimGroup.Id
 
-if ($existingResource) {
-    Write-Host "[INFO] Group is already in the catalog. Skipping." -ForegroundColor Yellow
-} else {
-    # Construct request body
-    $GroupResourceAddParameters = @{
-        requestType = "adminAdd"
-        resource = @{
-            originId     = $GroupObjectId
-            originSystem = "AadGroup"
-        }
-        catalog = @{
-            id = $CatalogId
-        }
-    }
+# 1) check for existing
+$exists = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementCatalogResource `
+      -AccessPackageCatalogId $using:catalogId `
+      -Filter "originId eq '$using:GroupObjectId' and originSystem eq 'AadGroup'"
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
 
-    # Make the request
-    try {
-        Write-Host "[INFO] Adding group to catalog..." -ForegroundColor Cyan
-        New-MgEntitlementManagementResourceRequest -BodyParameter $GroupResourceAddParameters | Out-Null
-        Start-Sleep -Seconds 3
-
-        # Validate addition
-        $validation = Get-MgEntitlementManagementCatalogResource `
-            -AccessPackageCatalogId $CatalogId `
-            -Filter "originId eq '$GroupObjectId' and originSystem eq 'AadGroup'"
-
-        if ($validation) {
-            Write-Host "[SUCCESS] Group successfully added to the catalog." -ForegroundColor Green
-        } else {
-            Write-Host "[WARNING] Could not verify if group was added. Please check manually." -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "[ERROR] Failed to add group to catalog: $($_.Exception.Message)" -ForegroundColor Red
-    }
+if ($exists) {
+    Write-Host "[INFO] Already in catalog. Skipping." -ForegroundColor Yellow
+    return
 }
 
-start-sleep -Seconds 2
+# 2) add it
+Write-Host "[INFO] Adding group to catalog…" -ForegroundColor Cyan
+Invoke-WithSpinner -ScriptBlock {
+    New-MgEntitlementManagementResourceRequest `
+      -RequestType 'adminAdd' `
+      -Resource @{ originId     = $using:GroupObjectId
+                   originSystem = 'AadGroup' } `
+      -Catalog  @{ id = $using:catalogId }
+} -MinimumMilliseconds 1000 | Out-Null
+Write-Host "`r[2K" -NoNewline
+
+# 3) verify
+$valid = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementCatalogResource `
+      -AccessPackageCatalogId $using:catalogId `
+      -Filter "originId eq '$using:GroupObjectId' and originSystem eq 'AadGroup'"
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
+
+if ($valid) {
+    Write-Host "[SUCCESS] Group successfully added to catalog." -ForegroundColor Green
+} else {
+    Write-Host "[WARNING] Could not verify – please check manually." -ForegroundColor Yellow
+}
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 # LINK ACCESS PACKAGE CATALOG TO ACCESS PACKAGE
@@ -621,13 +722,17 @@ Write-Host "│       LINK ACCESS PACKAGE CATALOG TO ACCESS PACKAGE        │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-
 Write-Host "[INFO] Attempting to assign group '$($pimGroup.DisplayName)' to access package..." -ForegroundColor Yellow
 
 # 1. Get the group resource from the catalog
-$catalogResources = Get-MgEntitlementManagementCatalogResource -AccessPackageCatalogId $catalogId -ExpandProperty "scopes" -All
-$groupResource = $catalogResources | Where-Object OriginId -eq $pimGroup.Id
+$catalogResources = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementCatalogResource `
+      -AccessPackageCatalogId $using:catalogId `
+      -ExpandProperty "scopes" -All
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
 
+$groupResource = $catalogResources | Where-Object OriginId -eq $pimGroup.Id
 if (-not $groupResource) {
     Write-Host "[ERROR] Group not found in catalog!" -ForegroundColor Red
     return
@@ -637,24 +742,21 @@ $groupResourceScope = $groupResource.Scopes[0]
 
 # 2. Get the 'Member' role for the group
 $filter = "(originSystem eq 'AadGroup' and resource/id eq '$($groupResource.Id)')"
-$resourceRoles = Get-MgEntitlementManagementCatalogResourceRole -AccessPackageCatalogId $catalogId -Filter $filter -ExpandProperty "resource"
-$memberRole = $resourceRoles | Where-Object DisplayName -eq "Member"
+$resourceRoles = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementCatalogResourceRole `
+      -AccessPackageCatalogId $using:catalogId `
+      -Filter $using:filter `
+      -ExpandProperty "resource"
+} -MinimumMilliseconds 1000
+Write-Host "`r[2K" -NoNewline
 
+$memberRole = $resourceRoles | Where-Object DisplayName -eq "Member"
 if (-not $memberRole) {
     Write-Host "[ERROR] 'Member' role not found for the group resource." -ForegroundColor Red
     return
 }
 
-
-
-#
-# Add a check to ensure the group is not already assigned to the access package 
-# Required beta graph
-# Might Remove in the future
-#
-
-
-# 4. Construct body for assignment
+# 3. Construct body for assignment
 $body = @{
     role = @{
         displayName   = "Member"
@@ -674,21 +776,24 @@ $body = @{
     }
 }
 
-# 5. Assign group to access package
+# 4. Assign group to access package
 try {
     Write-Host "[INFO] Linking group to access package..." -ForegroundColor Yellow
-    $null = New-MgEntitlementManagementAccessPackageResourceRoleScope -AccessPackageId $accessPackageId -BodyParameter $body
+    Invoke-WithSpinner -ScriptBlock {
+        New-MgEntitlementManagementAccessPackageResourceRoleScope `
+          -AccessPackageId $using:accessPackageId `
+          -BodyParameter $using:body
+    } -MinimumMilliseconds 1000 | Out-Null
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[SUCCESS] Linked group to access package with 'Member' role." -ForegroundColor Green
 }
 catch {
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[ERROR] Failed to link group to access package: $_" -ForegroundColor Red
     Write-Host "[INFO] Request payload:" -ForegroundColor Yellow
     $body | ConvertTo-Json -Depth 10 | Write-Host
 }
 
-
-
-start-sleep -Seconds 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -706,58 +811,59 @@ if (-not $accessPackageId -or -not [guid]::TryParse($accessPackageId, [ref]([gui
     throw "[ERROR] Invalid or missing accessPackageId: $accessPackageId"
 }
 
-Write-Host "[INFO] Checking for existing assignment policy named '$autoPolicyName'..." -ForegroundColor Cyan
-$existingPolicy = Get-MgEntitlementManagementAssignmentPolicy -All
-$policyId = ($existingPolicy | Where-Object { $_.DisplayName -eq $autoPolicyName }).Id
+Write-Host "[INFO] Checking for existing assignment policies..." -ForegroundColor Cyan
 
-if ($policyId) {
+# 1) Fetch all policies under spinner
+$allPolicies = Invoke-WithSpinner -ScriptBlock {
+    Get-MgEntitlementManagementAssignmentPolicy -All
+} -MinimumMilliseconds 1000
+# clear spinner line
+Write-Host "`r[2K" -NoNewline
+
+# 2) Find by name
+$existingPolicy = $allPolicies | Where-Object DisplayName -eq $autoPolicyName
+
+if ($existingPolicy) {
+    $policyId = $existingPolicy.Id
     Write-Host "[SUCCESS] Found existing Assignment Policy '$autoPolicyName'. Skipping creation." -ForegroundColor Yellow
-} else {
-    Write-Host "[INFO] Creating new auto-assignment policy: '$autoPolicyName'" -ForegroundColor Cyan
+}
+else {
+    Write-Host "[INFO] Creating new auto-assignment policy: '$autoPolicyName'..." -ForegroundColor Cyan
 
     # 🛠 Build request body
     $autoPolicyParameters = @{
-        DisplayName           = $autoPolicyName
-        Description           = $autoPolicyDescription
-        AllowedTargetScope    = "specificDirectoryUsers"
-        SpecificAllowedTargets = @(
+        displayName            = $autoPolicyName
+        description            = $autoPolicyDescription
+        allowedTargetScope     = "specificDirectoryUsers"
+        specificAllowedTargets = @(
             @{
-                "@odata.type"  = "#microsoft.graph.attributeRuleMembers"
-                description    = $policyDescription
-                membershipRule = $employeeIdFilter
+                "@odata.type"   = "#microsoft.graph.attributeRuleMembers"
+                description     = $policyDescription
+                membershipRule  = $employeeIdFilter
             }
         )
-        AutomaticRequestSettings = @{
-            RequestAccessForAllowedTargets = $true
+        automaticRequestSettings = @{
+            requestAccessForAllowedTargets = $true
         }
-        AccessPackage = @{
-            Id = $accessPackageId
-        }
+        accessPackage = @{ id = $accessPackageId }
     }
 
-    # Send API request
-    try {
-        $newPolicy = New-MgEntitlementManagementAssignmentPolicy -BodyParameter $autoPolicyParameters
-        Write-Host "[SUCCESS] Auto-assignment policy created successfully: $($newPolicy.Id)" -ForegroundColor Green
-    } catch {
-        Write-Host "[ERROR] Failed to create auto-assignment policy: $_" -ForegroundColor Red
+    # 3) Create under spinner
+    $newPolicy = Invoke-WithSpinner -ScriptBlock {
+        New-MgEntitlementManagementAssignmentPolicy -BodyParameter $using:autoPolicyParameters
+    } -MinimumMilliseconds 1000
+    # clear spinner line
+    Write-Host "`r[2K" -NoNewline
+
+    if ($newPolicy) {
+        $policyId = $newPolicy.Id
+        Write-Host "[SUCCESS] Auto-assignment policy created successfully: ID $policyId" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] Failed to create auto-assignment policy." -ForegroundColor Red
         return
     }
-    
-
-    # Refresh $policyId after creation
-    $policyId = $newPolicy.Id
 }
 
-# Final check
-if (-not $policyId) {
-    Write-Host "[ERROR] Policy ID not found after creation for '$autoPolicyName'." -ForegroundColor Red
-} else {
-    Write-Host "[INFO] Assignment policy ID: $policyId" -ForegroundColor Gray
-}
-
-# Optional: Pause before next steps
-Start-Sleep -Seconds 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
