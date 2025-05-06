@@ -1,13 +1,5 @@
 # Automating Access Package Creation and Azure Lighthouse Onboarding
 
-This project spans two separate repositories:
-
-- **Access Package Script Repository:** [Link to Access Package Script Repository](<ACCESS_PACKAGE_REPO_URL>)
-- **Azure Lighthouse Onboarding Script Repository:** [Link to Lighthouse Script Repository](<LIGHTHOUSE_REPO_URL>)
-
-These scripts are used to onboard external tenants and users in a secure and scalable manner by combining Microsoft Entra Entitlement Management and Azure Lighthouse.
-
----
 
 ## 🧭 Workflow Overview
 
