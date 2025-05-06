@@ -20,7 +20,8 @@
 ## 📋 Prerequisites
 
 ### PowerShell
-- PowerShell 7 (`pwsh.exe`)
+- **PowerShell 7 or higher** is installed.
+  - [Download PowerShell 7](https://github.com/PowerShell/PowerShell/releases)
 
 ### Required Modules
 The following modules will be installed automatically by the scripts if not already present:
