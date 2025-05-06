@@ -1,13 +1,5 @@
 # Automating Access Package Creation and Azure Lighthouse Onboarding
 
-This project spans two separate repositories:
-
-- **Access Package Script Repository:** [Link to Access Package Script Repository](<ACCESS_PACKAGE_REPO_URL>)
-- **Azure Lighthouse Onboarding Script Repository:** [Link to Lighthouse Script Repository](<LIGHTHOUSE_REPO_URL>)
-
-These scripts are used to onboard external tenants and users in a secure and scalable manner by combining Microsoft Entra Entitlement Management and Azure Lighthouse.
-
----
 
 ## 🧭 Workflow Overview
 
@@ -28,7 +20,8 @@ These scripts are used to onboard external tenants and users in a secure and sca
 ## 📋 Prerequisites
 
 ### PowerShell
-- PowerShell 7 (`pwsh.exe`)
+- **PowerShell 7 or higher** is installed.
+  - [Download PowerShell 7](https://github.com/PowerShell/PowerShell/releases)
 
 ### Required Modules
 The following modules will be installed automatically by the scripts if not already present:
