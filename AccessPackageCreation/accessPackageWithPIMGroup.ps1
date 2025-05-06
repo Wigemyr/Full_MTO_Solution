@@ -192,7 +192,7 @@ try {
     Invoke-WithSpinner -ScriptBlock {
         Connect-MgGraph `
             -Scopes "Application.ReadWrite.All", "RoleManagement.ReadWrite.Directory", `
-                    "EntitlementManagement.ReadWrite.All", "Group.ReadWrite.All", "User.Invite.All" `
+                    "EntitlementManagement.ReadWrite.All", "Group.ReadWrite.All", "User.ReadWrite.All" `
             -ErrorAction Stop
     } -MinimumMilliseconds 1000 | Out-Null
 
