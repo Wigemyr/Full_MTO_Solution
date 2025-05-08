@@ -33,8 +33,8 @@ $paramsFile     = ".\templates\subscription.parameters.json"    # Path to ARM pa
 $location       = "norwayeast"                                  # Azure region for deployments - change if needed
 
 # Group settings
-$pocGroupName   = "<display name of entra id group>"            # Display name of the PoC group
-$pocGroupRole   = "<rbac role>"                                 # Role assigned to the PoC group
+$pocGroupName   = "MTO-LH-TEST"            # Display name of the PoC group
+$pocGroupRole   = "Contributor"                                 # Role assigned to the PoC group
 
 # Other settings
 $requiredRole   = "Owner"                                       # Required role for onboarding - only "Owner" is supported
@@ -252,63 +252,102 @@ if (-not (Get-AzContext)) {
     Write-Host "`r[2K" -NoNewline
 }
 
-# Get current signed-in user
+# Get current signed-in user and tenant ID
 $currentContext = Get-AzContext -ErrorAction Stop
 $currentUserUpn = $currentContext.Account
+$tenantId = $currentContext.Tenant.Id
+
+# Resolve ObjectId from UPN or SPN
+try {
+    if ($currentUserUpn -match '@') {
+        # User account
+        $currentUserObjectId = (Get-AzADUser -UserPrincipalName $currentUserUpn -ErrorAction Stop).Id
+    } else {
+        # Likely a service principal
+        $currentUserObjectId = (Get-AzADServicePrincipal -DisplayName $currentUserUpn -ErrorAction Stop).Id
+    }
+} catch {
+    Write-Host "[ERROR] Could not retrieve ObjectId for $currentUserUpn. Ensure the account exists and you have permission to query Entra ID." -ForegroundColor Red
+    exit 1
+}
+
+# Debugging outputs (commented out for future troubleshooting)
+# Write-Host "[DEBUG] Current User UPN: $currentUserUpn" -ForegroundColor Yellow
+# Write-Host "[DEBUG] Current User Object ID: $currentUserObjectId" -ForegroundColor Yellow
+# Write-Host "[DEBUG] Current Tenant ID: $tenantId" -ForegroundColor Yellow
+
+if (-not $currentUserUpn -or [string]::IsNullOrWhiteSpace($currentUserUpn)) {
+    Write-Host "[ERROR] Could not determine signed-in user UPN. Please ensure you are signed in with a valid Azure account." -ForegroundColor Red
+    Write-Host "[INFO] Try running 'Connect-AzAccount' manually to verify your account." -ForegroundColor Yellow
+    exit 1
+}
 
 Write-Host "[INFO] Checking role assignments for user: $currentUserUpn" -ForegroundColor Yellow
 
 try {
-    # 1) Fetch all subscriptions under spinner
     $subscriptions = Invoke-WithSpinner -ScriptBlock {
-        Get-AzSubscription -ErrorAction Stop
+        Get-AzSubscription -TenantId $tenantId -ErrorAction Stop
     } -MinimumMilliseconds 0
     Write-Host "`r[2K" -NoNewline
 
-    # Initialize collections
-    $ownerSubs    = @()
+    if (-not $subscriptions -or $subscriptions.Count -eq 0) {
+        Write-Host "[ERROR] No subscriptions found. Ensure your account has access." -ForegroundColor Red
+        exit 1
+    }
+
+    $ownerSubs = @()
     $notOwnerSubs = @()
+    $disabledSubs = @()
 
     foreach ($sub in $subscriptions) {
-        # Switch context
-        Set-AzContext -SubscriptionId $sub.Id -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
-
-        # 2) Check role assignment under spinner
-        $roleAssignments = Invoke-WithSpinner -ScriptBlock {
-            Get-AzRoleAssignment -SignInName $using:currentUserUpn -Scope "/subscriptions/$($using:sub.Id)" -ErrorAction SilentlyContinue
-        } -MinimumMilliseconds 0
-        Write-Host "`r[2K" -NoNewline
-
-        $subInfo = [PSCustomObject]@{
-            SubscriptionName  = $sub.Name
-            SubscriptionId    = $sub.Id
-            SubscriptionState = $sub.State
+        if ($sub.State -ne "Enabled") {
+            $disabledSubs += [PSCustomObject]@{
+                SubscriptionName  = $sub.Name
+                SubscriptionId    = $sub.Id
+                SubscriptionState = $sub.State
+            }
+            continue
         }
 
-        if ($roleAssignments -and ($roleAssignments.RoleDefinitionName -contains 'Owner')) {
-            $ownerSubs    += $subInfo
-        } else {
-            $notOwnerSubs += $subInfo
+        Write-Host "[INFO] Checking subscription: $($sub.Name)" -ForegroundColor Cyan
+
+        try {
+            $scope = "/subscriptions/$($sub.Id)"
+            $roleAssignments = Invoke-WithSpinner -ScriptBlock {
+                Get-AzRoleAssignment -ObjectId $using:currentUserObjectId -Scope $using:scope -ErrorAction SilentlyContinue
+            } -MinimumMilliseconds 0
+            Write-Host "`r[2K" -NoNewline
+
+            $subInfo = [PSCustomObject]@{
+                SubscriptionName  = $sub.Name
+                SubscriptionId    = $sub.Id
+                SubscriptionState = $sub.State
+            }
+
+            if ($roleAssignments -and ($roleAssignments.RoleDefinitionName -contains 'Owner')) {
+                $ownerSubs += $subInfo
+            } else {
+                $notOwnerSubs += $subInfo
+            }
+        } catch {
+            Write-Host "[ERROR] Failed to get role assignments for $($sub.Name): $($_.Exception.Message)" -ForegroundColor Red
+            continue
         }
     }
 
-    # Sort alphabetically
     $ownerSubs    = $ownerSubs    | Sort-Object SubscriptionName
     $notOwnerSubs = $notOwnerSubs | Sort-Object SubscriptionName
+    $disabledSubs = $disabledSubs | Sort-Object SubscriptionName
 
-    # Define label width
     $labelWidth = 22
 
-    # Output Owner list
-    Write-Host ""
-    Write-Host "─────────────────────────────────────────────────────────────────────"  -ForegroundColor Gray
-    Write-Host " Subscriptions where user HAS 'Owner' role:"                            -ForegroundColor Green
-    Write-Host "─────────────────────────────────────────────────────────────────────"  -ForegroundColor Gray
-
+    Write-Host "`n─────────────────────────────────────────────────────────────────────" -ForegroundColor Gray
+    Write-Host " Subscriptions where user HAS 'Owner' role:" -ForegroundColor Green
+    Write-Host "─────────────────────────────────────────────────────────────────────" -ForegroundColor Gray
     if ($ownerSubs.Count -gt 0) {
         foreach ($sub in $ownerSubs) {
             Write-Host ("  " + "Subscription Name".PadRight($labelWidth) + ": " + $sub.SubscriptionName) -ForegroundColor Green
-            Write-Host ("  " + "Subscription ID".PadRight($labelWidth)   + ": " + $sub.SubscriptionId) -ForegroundColor Green
+            Write-Host ("  " + "Subscription ID".PadRight($labelWidth) + ": " + $sub.SubscriptionId) -ForegroundColor Green
             Write-Host ("  " + "Subscription Status".PadRight($labelWidth) + ": " + $sub.SubscriptionState) -ForegroundColor Green
             Write-Host ""
         }
@@ -316,16 +355,13 @@ try {
         Write-Host "  [None]" -ForegroundColor DarkGray
     }
 
-    # Output Not Owner list
-    Write-Host ""
-    Write-Host "─────────────────────────────────────────────────────────────────────"  -ForegroundColor Gray
-    Write-Host " Subscriptions where user DOES NOT HAVE 'Owner' role:"                  -ForegroundColor Red
-    Write-Host "─────────────────────────────────────────────────────────────────────"  -ForegroundColor Gray
-
+    Write-Host "`n─────────────────────────────────────────────────────────────────────" -ForegroundColor Gray
+    Write-Host " Subscriptions where user DOES NOT HAVE 'Owner' role:" -ForegroundColor Red
+    Write-Host "─────────────────────────────────────────────────────────────────────" -ForegroundColor Gray
     if ($notOwnerSubs.Count -gt 0) {
         foreach ($sub in $notOwnerSubs) {
             Write-Host ("  " + "Subscription Name".PadRight($labelWidth) + ": " + $sub.SubscriptionName) -ForegroundColor Red
-            Write-Host ("  " + "Subscription ID".PadRight($labelWidth)   + ": " + $sub.SubscriptionId) -ForegroundColor Red
+            Write-Host ("  " + "Subscription ID".PadRight($labelWidth) + ": " + $sub.SubscriptionId) -ForegroundColor Red
             Write-Host ("  " + "Subscription Status".PadRight($labelWidth) + ": " + $sub.SubscriptionState) -ForegroundColor Red
             Write-Host ""
         }
@@ -333,21 +369,30 @@ try {
         Write-Host "  [None]" -ForegroundColor DarkGray
     }
 
-    # If missing Owner role, ask if proceed
-    if ($notOwnerSubs.Count -gt 0) {
-        Write-Host ""
-        Write-Host "[WARNING] User does not have Owner-role on all subscriptions." -ForegroundColor Yellow
-        $proceedConfirmation = Read-Host "Do you wish to proceed with only the subscriptions where you have Owner? (Y/N)"
-        if ($proceedConfirmation -notmatch '^[Yy]') {
+    Write-Host "`n─────────────────────────────────────────────────────────────────────" -ForegroundColor Gray
+    Write-Host " Subscriptions which are DISABLED:" -ForegroundColor Yellow
+    Write-Host "─────────────────────────────────────────────────────────────────────" -ForegroundColor Gray
+    if ($disabledSubs.Count -gt 0) {
+        foreach ($sub in $disabledSubs) {
+            Write-Host ("  " + "Subscription Name".PadRight($labelWidth) + ": " + $sub.SubscriptionName) -ForegroundColor Yellow
+            Write-Host ("  " + "Subscription ID".PadRight($labelWidth) + ": " + $sub.SubscriptionId) -ForegroundColor Yellow
+            Write-Host ("  " + "Subscription Status".PadRight($labelWidth) + ": " + $sub.SubscriptionState) -ForegroundColor Yellow
             Write-Host ""
-            Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Red
-            Write-Host "   ABORTED: User chose not to proceed." -ForegroundColor Red
-            Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Red
-            exit 1
         }
+    } else {
+        Write-Host "  [None]" -ForegroundColor DarkGray
     }
 
-    Write-Host "[INFO] Checks complete. Proceeding to onboarding." -ForegroundColor Cyan
+    Write-Host ""
+    $proceedToOnboarding = Read-Host "Do you wish to proceed to onboarding the subscriptions where Owner-role is present? (Y/N)"
+    if ($proceedToOnboarding -notmatch '^[Yy]') {
+        Write-Host "`n═════════════════════════════════════════════════════════════════════" -ForegroundColor Red
+        Write-Host "   ABORTED: User chose not to proceed." -ForegroundColor Red
+        Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "`n[INFO] Checks complete. Proceeding to onboarding." -ForegroundColor Cyan
 }
 catch {
     Write-Host "[ERROR] An error occurred while checking role assignments: $_" -ForegroundColor Red
@@ -371,7 +416,7 @@ Write-Host "[INFO] Setting parameters for onboarding..." -ForegroundColor Yellow
 # --- Fetch enabled subscriptions under spinner (no artificial delay) ---
 $enabledSubscriptions = Invoke-WithSpinner -ScriptBlock {
     Get-AzSubscription | Where-Object State -eq 'Enabled'
-} -MinimumMilliseconds 0
+} -MinimumMilliseconds 1000
 Write-Host "`r[2K" -NoNewline
 
 
@@ -401,7 +446,7 @@ try {
             -TemplateFile          $using:templateFile `
             -TemplateParameterFile $using:paramsFile `
             -ErrorAction Stop
-    } -MinimumMilliseconds 0
+    } -MinimumMilliseconds 1000
 
     # Clear spinner line and show success immediately
     Write-Host "`r[2K" -NoNewline
@@ -467,127 +512,111 @@ catch {
 }
 
 
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-#      VERIFYING AZURE LIGHTHOUSE ONBOARDING
+#      VERIFYING DEPLOYMENT
 # ─────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "┌────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "│               VERIFYING AZURE LIGHTHOUSE ONBOARDING                │" -ForegroundColor Cyan
-Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+Write-Host "┌────────────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
+Write-Host "│                        VERIFYING DEPLOYMENT                        │" -ForegroundColor Cyan
+Write-Host "└────────────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-Write-Host "[INFO] Verifying Azure Lighthouse onboarding for subscriptions where user has 'Owner' role..." -ForegroundColor Yellow
+# Verifying Azure Lighthouse onboarding
+Write-Host "[INFO] Verifying Azure Lighthouse onboarding..." -ForegroundColor Yellow
 
-try {
-    # 1) Fetch all subscriptions under spinner
-    $subscriptions = Invoke-WithSpinner -ScriptBlock {
-        Get-AzSubscription -ErrorAction Stop
-    } -MinimumMilliseconds 0
-    Write-Host "`r[2K" -NoNewline
+$report = Get-AzManagedServicesDefinition `
+  -Scope "/subscriptions/$subId" `
+  -ErrorAction SilentlyContinue | ForEach-Object {
 
-    # Filter to only those where the user has Owner
-    $ownerSubscriptions = foreach ($sub in $subscriptions) {
-        # Check role assignment under spinner
-        $roleAssignments = Invoke-WithSpinner -ScriptBlock {
-            Get-AzRoleAssignment -Scope "/subscriptions/$($sub.Id)" -ErrorAction SilentlyContinue
-        } -MinimumMilliseconds 0
-        Write-Host "`r[2K" -NoNewline
+    $def              = $_
+    $offerName        = $def.RegistrationDefinitionName
+    $definitionId     = $def.Name
+    $mspTenantId      = $def.ManagedByTenantId
 
-        if ($roleAssignments.RoleDefinitionName -contains "Owner") {
-            $sub
-        }
+    # Fetch the subscription name
+    $subName = (Get-AzSubscription -SubscriptionId $subId -ErrorAction SilentlyContinue).Name
+
+    # Try to read the friendly tenant name; fall back to an ARM call if not present
+    if ($def.PSObject.Properties.Match('ManagedByTenantName')) {
+        $mspTenantName = $def.ManagedByTenantName
+    }
+    else {
+        $fullDef = Get-AzResource `
+          -ResourceId $def.Id `
+          -ApiVersion 2022-10-01 `
+          -ExpandProperties
+        $mspTenantName = $fullDef.Properties.managedByTenantName
     }
 
-    if (-not $ownerSubscriptions) {
-        Write-Host "[INFO] No subscriptions found where the user has the 'Owner' role. Exiting." -ForegroundColor Yellow
-        return
-    }
-
-    foreach ($subscription in $ownerSubscriptions) {
-        $subId   = $subscription.Id
-        $subName = $subscription.Name
-
-        Write-Host ""  
-        Write-Host "Processing subscription: $subName ($subId)" -ForegroundColor Cyan
-
-        # 2) Fetch Lighthouse definitions under spinner
-        $definitions = Invoke-WithSpinner -ScriptBlock {
-            Get-AzManagedServicesDefinition -Scope "/subscriptions/$using:subId" -ErrorAction SilentlyContinue
-        } -MinimumMilliseconds 0
-        Write-Host "`r[2K" -NoNewline
-
-        if (-not $definitions) {
-            Write-Host "[INFO] No Lighthouse delegation found in this subscription." -ForegroundColor Yellow
-            continue
+    foreach ($auth in $def.Authorization) {
+        # Extract the GUID portion and resolve to friendly role name
+        $guid     = ($auth.RoleDefinitionId -split '/')[-1]
+        $roleObj  = Get-AzRoleDefinition -Id $guid -ErrorAction SilentlyContinue
+        $roleName = if ($roleObj) { $roleObj.Name } else { '<unknown>' }
+    
+        # Determine PoCGruppeStatus
+        $pocGruppeStatus = if ($auth.PrincipalIdDisplayName -eq "PoC-gruppe" -and $roleName -eq "Contributor") {
+            "PoC-gruppe has Contributor access"
+        } else {
+            "PoC-gruppe does not have Contributor access"
         }
-
-        foreach ($def in $definitions) {
-            # Resolve friendly tenant name if needed under spinner
-            if (-not $def.PSObject.Properties.Match('ManagedByTenantName')) {
-                $fullDef = Invoke-WithSpinner -ScriptBlock {
-                    Get-AzResource -ResourceId $using:def.Id -ApiVersion 2022-10-01 -ExpandProperties
-                } -MinimumMilliseconds 0
-                Write-Host "`r[2K" -NoNewline
-                $mspTenantName = $fullDef.Properties.managedByTenantName
-            }
-            else {
-                $mspTenantName = $def.ManagedByTenantName
-            }
-
-            # Fetch resource roles under spinner
-            $filter       = "(originSystem eq 'AadGroup' and resource/id eq '$($def.Id)')"
-            $resourceRoles = Invoke-WithSpinner -ScriptBlock {
-                Get-AzResourceRoleDefinition -Scope "/subscriptions/$using:subId" -Filter $using:filter
-            } -MinimumMilliseconds 0
-            Write-Host "`r[2K" -NoNewline
-
-            # Build report objects
-            foreach ($auth in $def.Authorization) {
-                $guid    = ($auth.RoleDefinitionId -split '/')[-1]
-                $roleObj = Invoke-WithSpinner -ScriptBlock {
-                    Get-AzRoleDefinition -Id $using:guid -ErrorAction SilentlyContinue
-                } -MinimumMilliseconds 0
-                Write-Host "`r[2K" -NoNewline
-
-                $roleName        = $roleObj.Name
-                $pocGruppeStatus = if ($auth.PrincipalIdDisplayName -eq $pocGroupName -and $roleName -eq $pocGroupRole) {
-                    "$pocGroupName has $pocGroupRole access"
-                } else {
-                    "$pocGroupName does not have $pocGroupRole access"
-                }
-
-                # Output details in vertical format
-                $fields = [ordered]@{
-                    ManagedByTenantName = $mspTenantName
-                    ManagedByTenantId   = $def.ManagedByTenantId
-                    SubscriptionName    = $subName
-                    SubscriptionId      = $subId
-                    OfferName           = $def.RegistrationDefinitionName
-                    PrincipalName       = $auth.PrincipalIdDisplayName
-                    RoleName            = $roleName
-                    PoCGruppeStatus     = $pocGruppeStatus
-                }
-
-                $esc     = [char]27
-                $boldOn  = "${esc}[1m"
-                $boldOff = "${esc}[22m"
-                $pad     = 20
-
-                foreach ($label in $fields.Keys) {
-                    Write-Host -NoNewline (($boldOn + $label.PadRight($pad) + ":" + $boldOff)) -ForegroundColor Green
-                    Write-Host "    $($fields[$label])"
-                }
-                $sepLen = $pad + 5 + ($fields.Values | Select-Object -First 1).Length
-                Write-Host ("─" * $sepLen) -ForegroundColor DarkGray
-            }
+    
+        [PSCustomObject]@{
+            SubscriptionId       = $subId
+            SubscriptionName     = $subName
+            OfferName            = $offerName
+            DefinitionId         = $definitionId
+            ManagedByTenantId    = $mspTenantId
+            ManagedByTenantName  = $mspTenantName
+            PrincipalId          = $auth.PrincipalId
+            PrincipalName        = $auth.PrincipalIdDisplayName
+            RoleDefinitionId     = $auth.RoleDefinitionId
+            RoleName             = $roleName
+            PoCGruppeStatus      = $pocGruppeStatus
         }
     }
 }
-catch {
-    Write-Host "[ERROR] Failed to verify Azure Lighthouse onboarding: $_" -ForegroundColor Red
+
+if ($report) {
+    # ANSI escape sequences for bold
+    $esc     = [char]27
+    $boldOn  = "${esc}[1m"
+    $boldOff = "${esc}[22m"
+    $pad     = 20  # Adjust label column width here
+
+    $report | ForEach-Object {
+        # Pack up the fields you want to display in a consistent order
+        $fields = [ordered]@{
+            ManagedByTenantName = $_.ManagedByTenantName 
+            ManagedByTenantId   = $_.ManagedByTenantId               
+            SubscriptionName    = $_.SubscriptionName
+            SubscriptionId      = $_.SubscriptionId
+            OfferName           = $_.OfferName
+            PrincipalName       = $_.PrincipalName
+            RoleName            = $_.RoleName
+            PoCGruppeStatus     = $_.PoCGruppeStatus
+        }
+
+        foreach ($label in $fields.Keys) {
+            $value = $fields[$label]
+
+            # Write the label bold + green, padded to align the colons
+            Write-Host -NoNewline (
+                $boldOn + $label.PadRight($pad) + ":" + $boldOff
+            ) -ForegroundColor Green
+
+            # Then write the value, with a few spaces in front
+            Write-Host "    $value"
+        }
+
+        # A separator line (length = label+padding+approx value width)
+        $sepLen = $pad + 5 + ($fields.Values | Select-Object -First 1).Length
+        Write-Host ("─" * $sepLen) -ForegroundColor DarkGray
+    }
+}
+else {
+    Write-Host "[INFO] No Lighthouse delegation found in this subscription." -ForegroundColor Yellow
 }
 
 
