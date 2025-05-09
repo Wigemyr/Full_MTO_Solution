@@ -27,17 +27,17 @@ Attachments     : subscription.json, subscription.parameters.json, offboarding_L
 # ─────────────────────────────────────────────────────────────────────────────
 
 # General settings
-$location       = "norwayeast"                                  # Azure region for deployments - change if needed
-$templateFile   = ".\templates\subscription.json"               # Path to ARM template
-$paramsFile     = ".\templates\subscription.parameters.json"    # Path to ARM parameters file
-$location       = "norwayeast"                                  # Azure region for deployments - change if needed
+$location           = "norwayeast"                                  # Azure region for deployments - change if needed
+$templateFile       = ".\templates\subscription.json"               # Path to ARM template
+$paramsFile         = ".\templates\subscription.parameters.json"    # Path to ARM parameters file
+$location           = "norwayeast"                                  # Azure region for deployments - change if needed
 
 # Group settings
-$GroupName   = "MTO-LH-TEST"                                    # Display name of the PoC group
-$GroupRoleName   = "Contributor"                                # Role assigned to the PoC group
+$GroupDisplayName   = "MTO-LH-TEST"                                    # Display name of the PoC group
+$GroupRoleName      = "Contributor"                                # Role assigned to the PoC group
 
 # Other settings
-$requiredRole   = "Owner"                                       # Required role for onboarding - only "Owner" is supported
+$requiredRole       = "Owner"                                       # Required role for onboarding - only "Owner" is supported - can be deleted if not needed
 
 
 
