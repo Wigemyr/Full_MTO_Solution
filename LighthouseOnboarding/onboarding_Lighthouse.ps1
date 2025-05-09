@@ -33,8 +33,8 @@ $paramsFile     = ".\templates\subscription.parameters.json"    # Path to ARM pa
 $location       = "norwayeast"                                  # Azure region for deployments - change if needed
 
 # Group settings
-$pocGroupName   = "MTO-LH-TEST"            # Display name of the PoC group
-$pocGroupRole   = "Contributor"                                 # Role assigned to the PoC group
+$GroupName   = "MTO-LH-TEST"                                    # Display name of the PoC group
+$GroupRoleName   = "Contributor"                                # Role assigned to the PoC group
 
 # Other settings
 $requiredRole   = "Owner"                                       # Required role for onboarding - only "Owner" is supported
@@ -556,10 +556,10 @@ $report = Get-AzManagedServicesDefinition `
         $roleName = if ($roleObj) { $roleObj.Name } else { '<unknown>' }
     
         # Determine PoCGruppeStatus
-        $pocGruppeStatus = if ($auth.PrincipalIdDisplayName -eq "PoC-gruppe" -and $roleName -eq "Contributor") {
-            "PoC-gruppe has Contributor access"
+        $pocGruppeStatus = if ($auth.PrincipalIdDisplayName -eq "$GroupDisplayName" -and $roleName -eq $GroupRoleName) {
+            "$GroupDisplayName has $GroupRoleName access"
         } else {
-            "PoC-gruppe does not have Contributor access"
+            "$GroupDisplayName does not have $GroupRoleName access"
         }
     
         [PSCustomObject]@{
@@ -636,3 +636,7 @@ Write-Host "[INFO] Subscriptions can now be managed from Management Tenant throu
 
 # Wait for the user to acknowledge before exiting
 Read-Host -Prompt "Press Enter to exit"
+
+
+
+
