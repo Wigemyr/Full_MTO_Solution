@@ -106,7 +106,7 @@ function Invoke-WithSpinner {
     }
 
     # Clear the spinner line using ANSI escape sequence for clean output
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
 
     # Return operation results and clean up resources
     # Following Azure best practice of proper resource management
@@ -246,7 +246,7 @@ $authInfo = Invoke-WithSpinner -ScriptBlock {
 } -MinimumMilliseconds 1000
 
 # Clear spinner line for clean output
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 # Verify role existence in tenant
 if (-not $authInfo.Role) {
@@ -289,7 +289,7 @@ Write-Host ""
 $pimGroup = Invoke-WithSpinner -ScriptBlock {
     Get-MgGroup -All | Where-Object DisplayName -eq $using:groupName
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 if ($pimGroup) {
     Write-Host "[INFO]    PIM group '$groupName' already exists. Skipping creation." -ForegroundColor Yellow
@@ -312,7 +312,7 @@ else {
             -Visibility         "Private"
     } -MinimumMilliseconds 1000
 
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
     Write-Host "[SUCCESS] Created PIM group: $($pimGroup.DisplayName)" -ForegroundColor Green
 }
 
@@ -339,7 +339,7 @@ $role = Invoke-WithSpinner -ScriptBlock {
     }
     return $r
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 if (-not $role) {
     Write-Host "[ERROR] Could not find or enable role '$roleDisplayName'." -ForegroundColor Red
@@ -355,7 +355,7 @@ $roleId = $role.Id
 $alreadyAssigned = Invoke-WithSpinner -ScriptBlock {
     (Get-MgDirectoryRoleMember -DirectoryRoleId $using:roleId -All).Id -contains $using:pimGroupId
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 if ($alreadyAssigned) {
     Write-Host "[INFO]    Group '$groupName' is already assigned to '$roleDisplayName'. Skipping..." -ForegroundColor Yellow
@@ -369,7 +369,7 @@ else {
         New-MgDirectoryRoleMemberByRef -DirectoryRoleId $using:roleId -BodyParameter $body
     } -MinimumMilliseconds 1000 | Out-Null
 
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
     Write-Host "[SUCCESS] Assigned role '$roleDisplayName' to group: $groupName" -ForegroundColor Green
 }
 
@@ -409,7 +409,7 @@ foreach ($guest in $guestList) {
         Get-MgUser -Filter "mail eq '$using:mainAdminEmail'" -ConsistencyLevel eventual -ErrorAction Stop
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
 
     if ($existingGuest) {
         # Track existing users to avoid re-invitation
@@ -433,7 +433,7 @@ foreach ($guest in $guestList) {
             -SendInvitationMessage:$true
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
 
     if ($invitation) {
         # Record successful invitation with Azure B2B user ID
@@ -495,13 +495,13 @@ foreach ($user in $users) {
             $guest = Invoke-WithSpinner -ScriptBlock {
                 Get-MgUser -Filter "mail eq '$using:email'" -ConsistencyLevel eventual -ErrorAction Stop
             } -MinimumMilliseconds 1000
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r" -NoNewline
 
             if ($guest) { break }
             Write-Host "[INFO] User not found yet (Attempt $attempt/$retryCount)." -ForegroundColor Yellow
             Start-Sleep -Seconds $retryDelaySeconds
         } catch {
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r" -NoNewline
             Write-Host "[ERROR] Exception querying user: $_" -ForegroundColor Red
             break
         }
@@ -528,7 +528,7 @@ foreach ($user in $users) {
             Get-MgUser -UserId $using:guestId -Property "employeeId" |
                 Select-Object -ExpandProperty employeeId
         } -MinimumMilliseconds 1000
-        Write-Host "`r[2K" -NoNewline
+        Write-Host "`r" -NoNewline
 
         if ($currentEmployeeId -eq $expectedEmployeeId) {
             $status = "Already correct"
@@ -540,7 +540,7 @@ foreach ($user in $users) {
             Invoke-WithSpinner -ScriptBlock {
                 Update-MgUser -UserId $using:guestId -BodyParameter @{ employeeId = $using:expectedEmployeeId }
             } -MinimumMilliseconds 1000 | Out-Null
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r" -NoNewline
 
             # --- Step D: Verify update was successful ---
             # Implementing verification pattern for critical attribute changes
@@ -549,7 +549,7 @@ foreach ($user in $users) {
                 Get-MgUser -UserId $using:guestId -Property "employeeId" |
                     Select-Object -ExpandProperty employeeId
             } -MinimumMilliseconds 1000
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r" -NoNewline
 
             if ($updatedEmployeeId -eq $expectedEmployeeId) {
                 $status = "Updated to $expectedEmployeeId"
@@ -637,7 +637,7 @@ $allCatalogs = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementCatalog -All
 } -MinimumMilliseconds 1000
 # clear spinner line
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 $existingCatalog = $allCatalogs | Where-Object DisplayName -eq $catalogName
 
@@ -659,7 +659,7 @@ else {
         New-MgEntitlementManagementCatalog -BodyParameter $using:catalogBody
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
 
     $catalogId = $newCatalog.Id
     Write-Host "[SUCCESS] Created catalog '$catalogName'. ID: $catalogId" -ForegroundColor Green
@@ -686,7 +686,7 @@ $allPackages = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementAccessPackage -All
 } -MinimumMilliseconds 1000
 # clear spinner line
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 # Apply client-side filter with exact name matching
 # Select-Object -First 1 ensures consistent behavior if multiple matches exist
@@ -718,7 +718,7 @@ else {
         New-MgEntitlementManagementAccessPackage -BodyParameter $using:params
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
 
     $accessPackageId = $accessPackage.Id
     Write-Host "[SUCCESS] Created Access Package: '$accessPackageName' (ID: $accessPackageId)" -ForegroundColor Green
@@ -746,7 +746,7 @@ $exists = Invoke-WithSpinner -ScriptBlock {
       -AccessPackageCatalogId $using:catalogId `
       -Filter "originId eq '$using:GroupObjectId' and originSystem eq 'AadGroup'"
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 if ($exists) {
     Write-Host "[INFO] Already in catalog. Skipping." -ForegroundColor Yellow
@@ -764,7 +764,7 @@ Invoke-WithSpinner -ScriptBlock {
                    originSystem = 'AadGroup' } `
       -Catalog  @{ id = $using:catalogId }
 } -MinimumMilliseconds 1000 | Out-Null
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 # --- Step 3: Verify resource addition with explicit validation ---
 # Implementing verification pattern for critical operations
@@ -774,7 +774,7 @@ $valid = Invoke-WithSpinner -ScriptBlock {
       -AccessPackageCatalogId $using:catalogId `
       -Filter "originId eq '$using:GroupObjectId' and originSystem eq 'AadGroup'"
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 if ($valid) {
     Write-Host "[SUCCESS] Group successfully added to catalog." -ForegroundColor Green
@@ -806,7 +806,7 @@ $catalogResources = Invoke-WithSpinner -ScriptBlock {
       -AccessPackageCatalogId $using:catalogId `
       -ExpandProperty "scopes" -All
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 # Find the specific resource by matching the Origin ID
 # Origin ID is the unique external identifier for cross-referencing
@@ -830,7 +830,7 @@ $resourceRoles = Invoke-WithSpinner -ScriptBlock {
       -Filter $using:filter `
       -ExpandProperty "resource"
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 # Target the specific "Member" role required for group membership
 # Member role is the standard role for group access in Entra ID
@@ -872,11 +872,11 @@ try {
           -AccessPackageId $using:accessPackageId `
           -BodyParameter $using:body
     } -MinimumMilliseconds 1000 | Out-Null
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
     Write-Host "[SUCCESS] Linked group to access package with 'Member' role." -ForegroundColor Green
 }
 catch {
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
     Write-Host "[ERROR] Failed to link group to access package: $_" -ForegroundColor Red
     # Display diagnostic payload for troubleshooting
     # This helps administrators resolve API format issues
@@ -910,7 +910,7 @@ $allPolicies = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementAssignmentPolicy -All
 } -MinimumMilliseconds 1000
 # clear spinner line
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r" -NoNewline
 
 # --- Step 2: Check for existing policy by display name ---
 # Implementing idempotent pattern to prevent duplicate policies
@@ -950,7 +950,7 @@ else {
         New-MgEntitlementManagementAssignmentPolicy -BodyParameter $using:autoPolicyParameters
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r" -NoNewline
 
     # Verify successful creation and provide clear success/failure indication
     if ($newPolicy) {
