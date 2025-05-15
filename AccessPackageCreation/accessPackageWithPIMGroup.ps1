@@ -41,31 +41,31 @@ param (
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 # Group-related variables
-$groupName = "PIM - Security Admin Group" # Name for the PIM-enabled group
-$groupDescription = "PIM-enabled group for Security Administrator role assignment" # Description for the group
-$roleDisplayName = "Security Administrator" # Role to be assigned to the group
+$groupName = "PIM - Security Admin Group" # Name for the PIM-enabled group being created
+$groupDescription = "PIM-enabled group for Security Administrator role assignment" # Description for the group being created
+$roleDisplayName = "Security Administrator" # Role to be assigned to the group that is being created
 
 # Hardcoded employeeId
 $expectedEmployeeId = "n38fy345gf54" # Example employeeId to be assigned to users
 
 # Access Package-related variables
-$catalogName = "Test Catalog" # Example name for the access package catalog
-$accessPackageName = "Test Access Package" # Example name for the access package
-$accessPackageDescription = "Test Access Package created via PowerShell" # Example description for the access package
+$catalogName = "Test Catalog" # Example name for the access package catalog being created
+$accessPackageName = "Test Access Package" # Example name for the access package being created
+$accessPackageDescription = "Test Access Package created via PowerShell" # Example description for the access package being created
 
 # Auto-assignment policy variables
-$autoPolicyName = "Test Auto-Assignment Policy" # Example name for the policy
-$autoPolicyDescription = "Auto-assignment policy for employeeId" # Example description for the auto-assignment policy
-$employeeIdFilter = '(user.employeeId -eq "n38fy345gf54")' # Example filter for employeeId with string "n38fy345gf54"
-$policyDescription = "Auto-assignment policy for employeeId filter" # Example description for the policy
+$autoPolicyName = "Test Auto-Assignment Policy" # Example name for the policy being created
+$autoPolicyDescription = "Auto-assignment policy for employeeId" # Example description for the auto-assignment policy being created
+$employeeIdFilter = '(user.employeeId -eq "n38fy345gf54")' # Example filter for employeeId with string "n38fy345gf54" being assigned to auto-assignment policy
+$policyDescription = "Auto-assignment policy for employeeId filter" # Example description for the policy being created
 
 # Retry configuration
-$retryCount = 5 # Number of retry attempts
+$retryCount = 5 # Number of retry attempts for user-invite lookup
 $retryDelaySeconds = 5 # Delay between retries in seconds
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# Spinner helper (v2 — erases its own line, no “Done.”)
+# ASYNCHRONOUS PROCESSING WITH VISUAL FEEDBACK
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function Invoke-WithSpinner {
     [CmdletBinding()]
@@ -73,46 +73,49 @@ function Invoke-WithSpinner {
         [Parameter(Mandatory)]
         [ScriptBlock]$ScriptBlock,
 
-        # minimum spin time in milliseconds (0 = no forced extra)
+        # Minimum display time in milliseconds (ensures spinner visibility for fast operations)
         [int]$MinimumMilliseconds = 0,
 
-        # time between frames
+        # Animation speed - interval between animation frames in milliseconds
         [int]$FrameDelayMs = 100
     )
 
-    # start the work in a thread job
+    # Execute operation in background thread to maintain UI responsiveness
+    # This follows Azure best practice of keeping the main thread free for user interaction
     $job     = Start-ThreadJob -ScriptBlock $ScriptBlock
     $frames  = @('|','/','-','\')
     $i       = 0
     $start   = Get-Date
 
     while ($true) {
-        # draw a frame
+        # Display current animation frame (optimized for terminal readability)
         Write-Host -NoNewline ("`r{0} Loading..." -f $frames[$i % $frames.Count])
         $i++
 
-        # compute elapsed
+        # Track elapsed time for minimum display duration enforcement
         $elapsedMs = ((Get-Date) - $start).TotalMilliseconds
 
-        # if the work is done AND we've hit the minimum, break out **before** sleeping
+        # Exit conditions: background job completed AND minimum display time met
+        # This ensures users can see feedback even for fast Azure operations
         if ($job.State -ne 'Running' -and $elapsedMs -ge $MinimumMilliseconds) {
             break
         }
 
-        # otherwise pause between frames
+        # Control animation speed for consistent user experience
         Start-Sleep -Milliseconds $FrameDelayMs
     }
 
-    # clear that line
-    Write-Host "`r[2K" -NoNewline
+    # Clear the spinner line using ANSI escape sequence for clean output
+    Write-Host "`r[2K" -NoNewline
 
-    # return job output
+    # Return operation results and clean up resources
+    # Following Azure best practice of proper resource management
     return Receive-Job -Job $job -Wait -AutoRemoveJob
 }
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# PowerShell Version Check (Requires 7+)
+# ENVIRONMENT VALIDATION: POWERSHELL VERSION CHECK
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -123,7 +126,8 @@ Write-Host ""
 
 Write-Host "[INFO] This script requires PowerShell 7 or later." -ForegroundColor Yellow
 
-# Wrap the version‐check pause in our spinner so it lasts at least 2 seconds:
+# Validate PowerShell version with visual feedback (minimum 1s display)
+# PowerShell 7+ is required for Microsoft Graph module compatibility
 Invoke-WithSpinner -ScriptBlock {
     if ($PSVersionTable.PSVersion.Major -lt 7) {
         Write-Host "[ERROR] You are running PowerShell $($PSVersionTable.PSVersion)." -ForegroundColor Red
@@ -136,7 +140,7 @@ Invoke-WithSpinner -ScriptBlock {
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# CHECK & INSTALL REQUIRED MODULES
+# DEPENDENCY MANAGEMENT: MICROSOFT GRAPH MODULE
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -145,12 +149,14 @@ Write-Host "│              CHECK & INSTALL REQUIRED MODULES              │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
+# Microsoft Graph module is essential for Entra ID and access package operations
 $requiredModules = @("Microsoft.Graph")
 
 foreach ($module in $requiredModules) {
-    # 1) Always spin ≥2s while checking, using $using:module so it's not null:
+    # Check for module availability with visual feedback
+    # Following Azure best practice for graceful dependency validation
     $isInstalled = Invoke-WithSpinner -ScriptBlock {
-        # $using:module is injected into the background job
+        # Variable scope handling for background jobs
         if (Get-Module -ListAvailable -Name $using:module) { $true } else { $false }
     } -MinimumMilliseconds 1000
 
@@ -159,6 +165,8 @@ foreach ($module in $requiredModules) {
         continue
     }
 
+    # Interactive module installation with user consent
+    # Azure best practice: Always prompt before modifying system state
     Write-Host "[WARNING] Module '$module' not found." -ForegroundColor Yellow
     $ans = Read-Host "    Install '$module' now? (Y/N)"
     if ($ans -notmatch '^[Yy]') {
@@ -166,7 +174,8 @@ foreach ($module in $requiredModules) {
         exit 1
     }
 
-    # 2) Spin ≥2s while installing, again passing $using:module
+    # Install module with visual feedback
+    # Using CurrentUser scope for least-privilege installation
     Invoke-WithSpinner -ScriptBlock {
         Install-Module $using:module -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
     } -MinimumMilliseconds 1000 | Out-Null
@@ -176,7 +185,7 @@ foreach ($module in $requiredModules) {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONNECT TO MICROSOFT GRAPH
+# AUTHENTICATION: MICROSOFT GRAPH API CONNECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -188,7 +197,8 @@ Write-Host ""
 Write-Host "[INFO] Connecting to Microsoft Graph..." -ForegroundColor Cyan
 
 try {
-    # show spinner for at least 2 s while Connect-MgGraph runs
+    # Connect to Microsoft Graph with required permissions for access package management
+    # Following Azure least-privilege principle by requesting only needed scopes
     Invoke-WithSpinner -ScriptBlock {
         Connect-MgGraph `
             -Scopes "Application.ReadWrite.All", "RoleManagement.ReadWrite.Directory", `
@@ -205,7 +215,7 @@ try {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHECK IF USER IS GLOBAL ADMINISTRATOR
+# PERMISSION VALIDATION: GLOBAL ADMINISTRATOR ROLE CHECK
 # ─────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -214,16 +224,19 @@ Write-Host "│            CHECK FOR CORRECT ROLE TO RUN SCRIPT            │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
+# Global Administrator role is required for access package and PIM operations
 $requiredRole = "Global Administrator"
 Write-Host "[INFO] Checking if user is '$requiredRole'..." -ForegroundColor Cyan
 
-# spin ≥2s while we grab context, user and role-membership info
+# Retrieve current user's role membership with visual feedback
+# Following Azure best practice for thorough permission validation
 $authInfo = Invoke-WithSpinner -ScriptBlock {
     $upn     = (Get-MgContext).Account
     $user    = Get-MgUser -UserId $upn
     $role    = Get-MgDirectoryRole -All | Where-Object { $_.DisplayName -eq $using:requiredRole }
     $members = if ($role) { Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id -All } else { @() }
 
+    # Return structured information for role validation
     [pscustomobject]@{
         UPN     = $upn
         UserId  = $user.Id
@@ -232,15 +245,17 @@ $authInfo = Invoke-WithSpinner -ScriptBlock {
     }
 } -MinimumMilliseconds 1000
 
-# clear that spinner line
-Write-Host "`r[2K" -NoNewline
+# Clear spinner line for clean output
+Write-Host "`r[2K" -NoNewline
 
-# now evaluate
+# Verify role existence in tenant
 if (-not $authInfo.Role) {
     Write-Host "[ERROR] The role '$requiredRole' is not enabled in your tenant." -ForegroundColor Red
     exit 1
 }
 
+# Verify current user has the required role
+# Following Azure security principle of validating permissions before execution
 $hasRole = $authInfo.Members.Id -contains $authInfo.UserId
 if (-not $hasRole) {
     Write-Host ""
@@ -255,7 +270,7 @@ if (-not $hasRole) {
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# ADD PIM GROUP WITH ACTIVE ROLE
+# PRIVILEGED ACCESS MANAGEMENT: CREATE PIM GROUP WITH DIRECTORY ROLE
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -264,22 +279,28 @@ Write-Host "│               ADD PIM GROUP WITH ACTIVE ROLE               │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# (Make sure these are set before you run this block:)
-#   $groupName
-#   $groupDescription
-#   $roleDisplayName
+# Required configuration variables for this section:
+#   $groupName - Name for the role-assignable group (set in VARIABLES section)
+#   $groupDescription - Group description text (set in VARIABLES section)
+#   $roleDisplayName - Azure AD directory role to assign (set in VARIABLES section)
 
-# --- Step 1: Check if the PIM group already exists (2 s spinner) ---
+# --- Step 1: Check if the PIM-enabled group already exists in the tenant ---
+# Using -All parameter for complete tenant search following Azure best practice for directory queries
 $pimGroup = Invoke-WithSpinner -ScriptBlock {
     Get-MgGroup -All | Where-Object DisplayName -eq $using:groupName
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
 if ($pimGroup) {
     Write-Host "[INFO]    PIM group '$groupName' already exists. Skipping creation." -ForegroundColor Yellow
 }
 else {
-    # --- Step 1b: Create the group (2 s spinner) ---
+    # --- Step 1b: Create the role-assignable group with PIM eligibility ---
+    # Key security properties:
+    # - IsAssignableToRole:$true - Enables PIM functionality for the group
+    # - SecurityEnabled:$true - Required for role assignment
+    # - MailEnabled:$false - Security group, not mail-enabled security group
+    # - Visibility:Private - Restricted visibility following least privilege
     $pimGroup = Invoke-WithSpinner -ScriptBlock {
         New-MgGroup `
             -DisplayName        $using:groupName `
@@ -291,51 +312,64 @@ else {
             -Visibility         "Private"
     } -MinimumMilliseconds 1000
 
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[SUCCESS] Created PIM group: $($pimGroup.DisplayName)" -ForegroundColor Green
 }
 
-# Extract the plain Id for threaded calls
+# Store ID for thread-safe usage in background jobs
 $pimGroupId = $pimGroup.Id
 
-# --- Step 2: Find or enable the Security Administrator role (2 s spinner) ---
+# --- Step 2: Activate the required directory role if not already active ---
+# Azure AD roles must be activated before assignment using the role template
+# This is a key Entra ID security pattern for enabling predefined roles
 $role = Invoke-WithSpinner -ScriptBlock {
+    # First attempt direct retrieval of active role
     $r = Get-MgDirectoryRole | Where-Object DisplayName -eq $using:roleDisplayName
     if (-not $r) {
+        # If not found, find the role template and activate it
         $t = Get-MgDirectoryRoleTemplate | Where-Object DisplayName -eq $using:roleDisplayName
         if ($t) { Enable-MgDirectoryRole -RoleTemplateId $t.Id | Out-Null }
+        
+        # Wait for role activation to propagate (Azure AD replication delay)
+        # This follows Azure best practice for role activation operations
         Start-Sleep -Seconds 5
+        
+        # Retry role retrieval after activation
         $r = Get-MgDirectoryRole | Where-Object DisplayName -eq $using:roleDisplayName
     }
     return $r
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
 if (-not $role) {
     Write-Host "[ERROR] Could not find or enable role '$roleDisplayName'." -ForegroundColor Red
     exit 1
 }
 
-# Extract the plain Id for threaded calls
+# Store ID for thread-safe usage in background jobs
 $roleId = $role.Id
 
-# --- Step 3: Assign the group if not already a member (2 s spinner) ---
+# --- Step 3: Check if group is already assigned to the role ---
+# Verify existing membership before attempting assignment to prevent errors
+# Following Azure best practice of idempotent operations
 $alreadyAssigned = Invoke-WithSpinner -ScriptBlock {
     (Get-MgDirectoryRoleMember -DirectoryRoleId $using:roleId -All).Id -contains $using:pimGroupId
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
 if ($alreadyAssigned) {
     Write-Host "[INFO]    Group '$groupName' is already assigned to '$roleDisplayName'. Skipping..." -ForegroundColor Yellow
 }
 else {
-    # --- Step 3b: Perform the assignment (2 s spinner) ---
+    # --- Step 3b: Perform the role assignment using Graph API ---
+    # Using reference-based assignment with proper OData reference format
+    # This is the Microsoft recommended method for directory role assignments
     Invoke-WithSpinner -ScriptBlock {
         $body = @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$using:pimGroupId" }
         New-MgDirectoryRoleMemberByRef -DirectoryRoleId $using:roleId -BodyParameter $body
     } -MinimumMilliseconds 1000 | Out-Null
 
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[SUCCESS] Assigned role '$roleDisplayName' to group: $groupName" -ForegroundColor Green
 }
 
@@ -343,9 +377,8 @@ else {
 
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# INVITE GUEST USER FROM MAIN TENANT
+# EXTERNAL IDENTITY MANAGEMENT: GUEST USER INVITATION
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -356,10 +389,12 @@ Write-Host ""
 
 Write-Host "[INFO] Starting invitation process..." -ForegroundColor Cyan
 
-# Load the CSV normally—this is usually fast, so no spinner here
+# Load user data from CSV file provided as parameter
+# Standard CSV import is fast enough that a spinner isn't necessary
 $guestList = Import-Csv -Path $pathToCSV
 
-# Prepare results array
+# Create tracking collection for batch operations and reporting
+# Azure best practice: Log and track identity operations for audit purposes
 $results = @()
 
 foreach ($guest in $guestList) {
@@ -367,14 +402,18 @@ foreach ($guest in $guestList) {
     $mainAdminEmail = $guest.Email
     $employeeId     = $guest.EmployeeId
 
-    # --- Check if the guest exists (1s spinner) ---
+    # --- Check if guest already exists to avoid duplicate invitations ---
+    # Using ConsistencyLevel eventual and filter for optimal performance
+    # Following Azure best practice for directory queries
     $existingGuest = Invoke-WithSpinner -ScriptBlock {
         Get-MgUser -Filter "mail eq '$using:mainAdminEmail'" -ConsistencyLevel eventual -ErrorAction Stop
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
 
     if ($existingGuest) {
+        # Track existing users to avoid re-invitation
+        # Following Azure best practice for idempotent operations
         $results += [PSCustomObject]@{
             "User Principal Name" = $mainAdminEmail
             "Object ID"           = $existingGuest.Id
@@ -383,7 +422,9 @@ foreach ($guest in $guestList) {
         continue
     }
 
-    # --- Invite the guest (1s spinner) ---
+    # --- Create and send invitation to external user ---
+    # Using Microsoft Graph invitations API for secure B2B collaboration
+    # Following Azure security best practice for external identity management
     $invitation = Invoke-WithSpinner -ScriptBlock {
         New-MgInvitation `
             -InvitedUserDisplayName    $using:displayName `
@@ -392,15 +433,17 @@ foreach ($guest in $guestList) {
             -SendInvitationMessage:$true
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
 
     if ($invitation) {
+        # Record successful invitation with Azure B2B user ID
         $results += [PSCustomObject]@{
             "User Principal Name" = $mainAdminEmail
             "Object ID"           = $invitation.InvitedUser.Id
             "Status"              = "Invitation sent, and user created."
         }
     } else {
+        # Track failed invitations for troubleshooting
         $results += [PSCustomObject]@{
             "User Principal Name" = $mainAdminEmail
             "Object ID"           = "N/A"
@@ -409,19 +452,21 @@ foreach ($guest in $guestList) {
     }
 }
 
-# Display results
+# Display formatted results table for better readability
+# Following Azure best practice for administrative reporting
 Write-Host ""
 $results | Format-Table `
     @{Label="User Principal Name"; Expression={$_. "User Principal Name".PadRight(50)} }, `
     @{Label="Object ID";           Expression={$_. "Object ID".PadRight(40)} }, `
     @{Label="Status";              Expression={$_. "Status".PadRight(60)} } -AutoSize
 
+# Brief delay to ensure output is readable before proceeding
 Start-Sleep -Seconds 2
 
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# ADD STRING TO EMPLOYEE ID FILTER FOR ACCESS PACKAGE ASSIGNMENT
+# USER ATTRIBUTE MANAGEMENT: SET EMPLOYEE ID FOR ACCESS POLICY TARGETING
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -430,7 +475,8 @@ Write-Host "│              ADD STRING TO EMPLOYEE ID FILTER              │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# Import users from CSV
+# Import users from CSV file - using the source imported earlier
+# Results array to track operation status for each user
 $users   = Import-Csv -Path $pathToCSV
 $results = @()
 
@@ -440,20 +486,22 @@ foreach ($user in $users) {
 
     Write-Host "`nProcessing $email ..." -ForegroundColor Cyan
 
-    # --- Step A: Find the user (spinner only while the call runs, min 1s) ---
+    # --- Step A: Find the user with retry logic ---
+    # Using retry pattern to accommodate B2B invitation propagation delay
+    # Following Azure best practice for handling eventual consistency
     $guest = $null
     for ($attempt = 1; $attempt -le $retryCount; $attempt++) {
         try {
             $guest = Invoke-WithSpinner -ScriptBlock {
                 Get-MgUser -Filter "mail eq '$using:email'" -ConsistencyLevel eventual -ErrorAction Stop
             } -MinimumMilliseconds 1000
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r[2K" -NoNewline
 
             if ($guest) { break }
             Write-Host "[INFO] User not found yet (Attempt $attempt/$retryCount)." -ForegroundColor Yellow
             Start-Sleep -Seconds $retryDelaySeconds
         } catch {
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r[2K" -NoNewline
             Write-Host "[ERROR] Exception querying user: $_" -ForegroundColor Red
             break
         }
@@ -473,29 +521,35 @@ foreach ($user in $users) {
     $guestId = $guest.Id
 
     try {
-        # --- Step B: Fetch current employeeId (spinner only while the call runs, min 1s) ---
+        # --- Step B: Fetch current employeeId attribute ---
+        # Retrieving only the needed property for efficiency
+        # This follows Azure best practice for targeted property retrieval
         $currentEmployeeId = Invoke-WithSpinner -ScriptBlock {
             Get-MgUser -UserId $using:guestId -Property "employeeId" |
                 Select-Object -ExpandProperty employeeId
         } -MinimumMilliseconds 1000
-        Write-Host "`r[2K" -NoNewline
+        Write-Host "`r[2K" -NoNewline
 
         if ($currentEmployeeId -eq $expectedEmployeeId) {
             $status = "Already correct"
             Write-Host "[INFO] Skipping update – employeeId already set to $expectedEmployeeId" -ForegroundColor Yellow
         } else {
-            # --- Step C: Update employeeId (spinner only while the call runs, min 1s) ---
+            # --- Step C: Update employeeId attribute ---
+            # Using partial update pattern to modify only the required attribute
+            # Following Azure best practice for minimal-impact directory updates
             Invoke-WithSpinner -ScriptBlock {
                 Update-MgUser -UserId $using:guestId -BodyParameter @{ employeeId = $using:expectedEmployeeId }
             } -MinimumMilliseconds 1000 | Out-Null
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r[2K" -NoNewline
 
-            # --- Step D: Verify update (spinner only while the call runs, min 1s) ---
+            # --- Step D: Verify update was successful ---
+            # Implementing verification pattern for critical attribute changes
+            # This follows Azure security best practice for update confirmation
             $updatedEmployeeId = Invoke-WithSpinner -ScriptBlock {
                 Get-MgUser -UserId $using:guestId -Property "employeeId" |
                     Select-Object -ExpandProperty employeeId
             } -MinimumMilliseconds 1000
-            Write-Host "`r[2K" -NoNewline
+            Write-Host "`r[2K" -NoNewline
 
             if ($updatedEmployeeId -eq $expectedEmployeeId) {
                 $status = "Updated to $expectedEmployeeId"
@@ -506,7 +560,8 @@ foreach ($user in $users) {
             }
         }
 
-        # Log result
+        # Log result with detailed status tracking
+        # Using structured objects for consistent reporting
         $results += [PSCustomObject]@{
             DisplayName      = $displayName
             Email            = $email
@@ -529,7 +584,8 @@ foreach ($user in $users) {
     }
 }
 
-# Display summary table
+# Display formatted summary table for better readability
+# Following Azure best practice for administrative reporting
 Write-Host ""
 $results | Format-Table `
     @{Label="DisplayName";           Expression={ $_.DisplayName.PadRight(35) }}, `
@@ -540,7 +596,7 @@ $results | Format-Table `
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# IMPORTANT MESSAGE BEFORE PROCEEDING
+# ACCESS PACKAGE DEPLOYMENT NOTICE
 # ─────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -558,7 +614,8 @@ Write-Host "           This is expected behavior — do not troubleshoot.       
 Write-Host "══════════════════════════════════════════════════════════════════════"  -ForegroundColor DarkYellow
 Write-Host ""
 
-# instead of Start-Sleep, prompt the user to continue when they're done reading
+# User confirmation before proceeding with Access Package creation
+# Following Azure best practice for interactive automation with checkpoints
 Read-Host -Prompt "Press Enter to proceed"
 
 
@@ -580,7 +637,7 @@ $allCatalogs = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementCatalog -All
 } -MinimumMilliseconds 1000
 # clear spinner line
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
 $existingCatalog = $allCatalogs | Where-Object DisplayName -eq $catalogName
 
@@ -602,7 +659,7 @@ else {
         New-MgEntitlementManagementCatalog -BodyParameter $using:catalogBody
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
 
     $catalogId = $newCatalog.Id
     Write-Host "[SUCCESS] Created catalog '$catalogName'. ID: $catalogId" -ForegroundColor Green
@@ -611,7 +668,7 @@ else {
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# CREATE OR FIND ACCESS PACKAGE
+# ENTITLEMENT MANAGEMENT: CREATE OR FIND ACCESS PACKAGE
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -622,24 +679,32 @@ Write-Host ""
 
 Write-Host "[INFO] Checking for existing Access Package: '$accessPackageName'..." -ForegroundColor Cyan
 
-# --- Spinner while fetching all packages, then filter client-side ---
+# --- Fetch all packages with retrieval optimization pattern ---
+# Using single bulk fetch and client-side filtering for better performance
+# This follows Azure best practice for minimizing API calls
 $allPackages = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementAccessPackage -All
 } -MinimumMilliseconds 1000
 # clear spinner line
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
+# Apply client-side filter with exact name matching
+# Select-Object -First 1 ensures consistent behavior if multiple matches exist
 $existingPackage = $allPackages |
     Where-Object DisplayName -eq $accessPackageName |
     Select-Object -First 1
 
 if ($existingPackage) {
+    # Reuse existing package following idempotent operation pattern
+    # This enables safe script re-execution without duplication
     $accessPackageId = $existingPackage.Id
     Write-Host "[SUCCESS] Found existing Access Package: '$accessPackageName' (ID: $accessPackageId)" -ForegroundColor Green
 }
 else {
     Write-Host "[INFO] Creating new Access Package: '$accessPackageName'..." -ForegroundColor Yellow
 
+    # Configure package with catalog reference
+    # isHidden:$false makes package visible in MyAccess portal for better discoverability
     $params = @{
         displayName = $accessPackageName
         description = $accessPackageDescription
@@ -647,12 +712,13 @@ else {
         catalog     = @{ id = $catalogId }
     }
 
-    # --- Spinner while creating the package ---
+    # --- Create package with visual progress feedback ---
+    # Providing meaningful user experience for potentially slow operations
     $accessPackage = Invoke-WithSpinner -ScriptBlock {
         New-MgEntitlementManagementAccessPackage -BodyParameter $using:params
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
 
     $accessPackageId = $accessPackage.Id
     Write-Host "[SUCCESS] Created Access Package: '$accessPackageName' (ID: $accessPackageId)" -ForegroundColor Green
@@ -660,7 +726,7 @@ else {
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ADD PIM GROUP WITH ROLE TO CATALOG
+# RESOURCE MANAGEMENT: ADD PIM GROUP TO ACCESS CATALOG
 # ──────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -672,20 +738,24 @@ Write-Host ""
 
 $GroupObjectId = $pimGroup.Id
 
-# 1) check for existing
+# --- Step 1: Verify if group already exists in catalog ---
+# Using precise OData filter for targeted resource lookup
+# This follows Azure best practice for efficient resource querying
 $exists = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementCatalogResource `
       -AccessPackageCatalogId $using:catalogId `
       -Filter "originId eq '$using:GroupObjectId' and originSystem eq 'AadGroup'"
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
 if ($exists) {
     Write-Host "[INFO] Already in catalog. Skipping." -ForegroundColor Yellow
     return
 }
 
-# 2) add it
+# --- Step 2: Add group to catalog using resource request API ---
+# Using adminAdd request type for immediate approval without review
+# This provides more direct control than standard user-initiated requests
 Write-Host "[INFO] Adding group to catalog…" -ForegroundColor Cyan
 Invoke-WithSpinner -ScriptBlock {
     New-MgEntitlementManagementResourceRequest `
@@ -694,26 +764,30 @@ Invoke-WithSpinner -ScriptBlock {
                    originSystem = 'AadGroup' } `
       -Catalog  @{ id = $using:catalogId }
 } -MinimumMilliseconds 1000 | Out-Null
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
-# 3) verify
+# --- Step 3: Verify resource addition with explicit validation ---
+# Implementing verification pattern for critical operations
+# This follows Azure security best practice for change confirmation
 $valid = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementCatalogResource `
       -AccessPackageCatalogId $using:catalogId `
       -Filter "originId eq '$using:GroupObjectId' and originSystem eq 'AadGroup'"
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
 if ($valid) {
     Write-Host "[SUCCESS] Group successfully added to catalog." -ForegroundColor Green
 } else {
+    # Detailed warning for manual verification
+    # This helps troubleshoot asynchronous processing issues in the Entra ID backend
     Write-Host "[WARNING] Could not verify – please check manually." -ForegroundColor Yellow
 }
 
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# LINK ACCESS PACKAGE CATALOG TO ACCESS PACKAGE
+# RESOURCE ROLE ASSIGNMENT: LINK GROUP TO ACCESS PACKAGE
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -724,23 +798,31 @@ Write-Host ""
 
 Write-Host "[INFO] Attempting to assign group '$($pimGroup.DisplayName)' to access package..." -ForegroundColor Yellow
 
-# 1. Get the group resource from the catalog
+# --- Step 1: Retrieve group resource details from catalog ---
+# Using ExpandProperty to minimize API calls and improve performance
+# This follows Azure best practice for efficient data retrieval
 $catalogResources = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementCatalogResource `
       -AccessPackageCatalogId $using:catalogId `
       -ExpandProperty "scopes" -All
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
+# Find the specific resource by matching the Origin ID
+# Origin ID is the unique external identifier for cross-referencing
 $groupResource = $catalogResources | Where-Object OriginId -eq $pimGroup.Id
 if (-not $groupResource) {
     Write-Host "[ERROR] Group not found in catalog!" -ForegroundColor Red
     return
 }
 
+# Extract scope information from the expanded properties
+# Scope defines the permission boundary for the resource
 $groupResourceScope = $groupResource.Scopes[0]
 
-# 2. Get the 'Member' role for the group
+# --- Step 2: Retrieve available roles for the group ---
+# Construct precise OData filter for targeted role lookup
+# This follows Azure best practice for efficient Graph API querying
 $filter = "(originSystem eq 'AadGroup' and resource/id eq '$($groupResource.Id)')"
 $resourceRoles = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementCatalogResourceRole `
@@ -748,15 +830,19 @@ $resourceRoles = Invoke-WithSpinner -ScriptBlock {
       -Filter $using:filter `
       -ExpandProperty "resource"
 } -MinimumMilliseconds 1000
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
+# Target the specific "Member" role required for group membership
+# Member role is the standard role for group access in Entra ID
 $memberRole = $resourceRoles | Where-Object DisplayName -eq "Member"
 if (-not $memberRole) {
     Write-Host "[ERROR] 'Member' role not found for the group resource." -ForegroundColor Red
     return
 }
 
-# 3. Construct body for assignment
+# --- Step 3: Prepare assignment payload with complete reference structure ---
+# Following Microsoft Graph API schema requirements for role assignment
+# This ensures all required relationship references are properly established
 $body = @{
     role = @{
         displayName   = "Member"
@@ -776,7 +862,9 @@ $body = @{
     }
 }
 
-# 4. Assign group to access package
+# --- Step 4: Execute role assignment with error handling ---
+# Implementing try-catch pattern for robust error management
+# This follows Azure best practice for reliable automation
 try {
     Write-Host "[INFO] Linking group to access package..." -ForegroundColor Yellow
     Invoke-WithSpinner -ScriptBlock {
@@ -784,12 +872,14 @@ try {
           -AccessPackageId $using:accessPackageId `
           -BodyParameter $using:body
     } -MinimumMilliseconds 1000 | Out-Null
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[SUCCESS] Linked group to access package with 'Member' role." -ForegroundColor Green
 }
 catch {
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
     Write-Host "[ERROR] Failed to link group to access package: $_" -ForegroundColor Red
+    # Display diagnostic payload for troubleshooting
+    # This helps administrators resolve API format issues
     Write-Host "[INFO] Request payload:" -ForegroundColor Yellow
     $body | ConvertTo-Json -Depth 10 | Write-Host
 }
@@ -797,7 +887,7 @@ catch {
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# CREATE AUTO-ASSIGNMENT POLICY (Fixed Rule Syntax)
+# ACCESS POLICY MANAGEMENT: CREATE ATTRIBUTE-BASED AUTO-ASSIGNMENT
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -806,21 +896,24 @@ Write-Host "│     CREATE AUTO-ASSIGNMENT POLICY (Fixed Rule Syntax)      │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
-# Validate accessPackageId
+# Validate required parameters to prevent invalid policy creation
+# Following Azure best practice for parameter validation before API calls
 if (-not $accessPackageId -or -not [guid]::TryParse($accessPackageId, [ref]([guid]::Empty))) {
     throw "[ERROR] Invalid or missing accessPackageId: $accessPackageId"
 }
 
 Write-Host "[INFO] Checking for existing assignment policies..." -ForegroundColor Cyan
 
-# 1) Fetch all policies under spinner
+# --- Step 1: Retrieve all policies for client-side filtering ---
+# Using bulk retrieval pattern for more efficient processing
 $allPolicies = Invoke-WithSpinner -ScriptBlock {
     Get-MgEntitlementManagementAssignmentPolicy -All
 } -MinimumMilliseconds 1000
 # clear spinner line
-Write-Host "`r[2K" -NoNewline
+Write-Host "`r[2K" -NoNewline
 
-# 2) Find by name
+# --- Step 2: Check for existing policy by display name ---
+# Implementing idempotent pattern to prevent duplicate policies
 $existingPolicy = $allPolicies | Where-Object DisplayName -eq $autoPolicyName
 
 if ($existingPolicy) {
@@ -830,31 +923,36 @@ if ($existingPolicy) {
 else {
     Write-Host "[INFO] Creating new auto-assignment policy: '$autoPolicyName'..." -ForegroundColor Cyan
 
-    # 🛠 Build request body
+    # --- Step 3: Configure policy with attribute-based targeting ---
+    # Construct policy with dynamic membership rule using employeeId
+    # Following Azure best practice for attribute-based access control
     $autoPolicyParameters = @{
         displayName            = $autoPolicyName
         description            = $autoPolicyDescription
-        allowedTargetScope     = "specificDirectoryUsers"
+        allowedTargetScope     = "specificDirectoryUsers" # Target specific users via rules
         specificAllowedTargets = @(
             @{
+                # Use attribute rule to dynamically assign based on employeeId
                 "@odata.type"   = "#microsoft.graph.attributeRuleMembers"
                 description     = $policyDescription
-                membershipRule  = $employeeIdFilter
+                membershipRule  = $employeeIdFilter # KQL-like syntax for targeting
             }
         )
         automaticRequestSettings = @{
+            # Enable auto-provisioning without user request
             requestAccessForAllowedTargets = $true
         }
         accessPackage = @{ id = $accessPackageId }
     }
 
-    # 3) Create under spinner
+    # --- Step 4: Create policy with visual progress feedback ---
     $newPolicy = Invoke-WithSpinner -ScriptBlock {
         New-MgEntitlementManagementAssignmentPolicy -BodyParameter $using:autoPolicyParameters
     } -MinimumMilliseconds 1000
     # clear spinner line
-    Write-Host "`r[2K" -NoNewline
+    Write-Host "`r[2K" -NoNewline
 
+    # Verify successful creation and provide clear success/failure indication
     if ($newPolicy) {
         $policyId = $newPolicy.Id
         Write-Host "[SUCCESS] Auto-assignment policy created successfully: ID $policyId" -ForegroundColor Green
@@ -867,7 +965,7 @@ else {
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-# FINAL SUCCESS MESSAGE (TABLE FORMAT)
+# DEPLOYMENT SUMMARY: RESOURCE DEPLOYMENT CONFIRMATION
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -876,38 +974,83 @@ Write-Host "│                   FINAL SUCCESS MESSAGE                    │" 
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Green
 Write-Host ""
 
-
-# Create an array of objects for structured output
+# --- Create structured output for better auditability ---
+# Using PSCustomObject for proper object-oriented reporting
+# Following Azure best practice for auditable deployment reporting
 $finalOutput = @(
-    [PSCustomObject]@{ "Property" = "Access Package ID      "; "DisplayName    " = $accessPackageName ; "Value" = $accessPackageId }
-    [PSCustomObject]@{ "Property" = "Policy ID             "; "DisplayName    " = $autoPolicyName ; "Value" = $policyId }
-    [PSCustomObject]@{ "Property" = "Access Package Catalog      "; "DisplayName    " = $catalogName ; "Value" = $catalogId}
-    [PSCustomObject]@{ "Property" = "Entra ID Role      "; "DisplayName    " = $Role.DisplayName ; "Value" = $Role.Id}
+    [PSCustomObject]@{ 
+        "Property" = "Access Package ID      ";  # Entitlement resource identifier
+        "DisplayName    " = $accessPackageName ; # User-friendly name for package
+        "Value" = $accessPackageId             # Unique GUID for API references
+    },
+    [PSCustomObject]@{ 
+        "Property" = "Policy ID             ";  # Auto-assignment policy reference
+        "DisplayName    " = $autoPolicyName ;   # Policy friendly name
+        "Value" = $policyId                     # Policy GUID for future reference
+    },
+    [PSCustomObject]@{ 
+        "Property" = "Access Package Catalog      "; # Container for access packages
+        "DisplayName    " = $catalogName ;         # Catalog friendly name
+        "Value" = $catalogId                       # Catalog GUID for API operations
+    },
+    [PSCustomObject]@{ 
+        "Property" = "Entra ID Role      ";      # Privileged role reference
+        "DisplayName    " = $Role.DisplayName ;  # Human-readable role name
+        "Value" = $Role.Id                       # Role GUID for IAM operations
+    }
 )
 
-# Display as a formatted table with wider column spacing
+# --- Display results with enhanced formatting for readability ---
+# Using Format-Table for consistent columnar output
+# This follows Azure best practice for administrative reporting
 $finalOutput | Format-Table
 
+# --- Overall success confirmation with colored feedback ---
+# Using ForegroundColor Green to clearly indicate successful completion
+# This follows Azure best practice for visual status indication
 Write-Host "`n[SUCCESS] Access Package, Assignment Policy, and Access Package Catalog was created!" -ForegroundColor Green
+
+# ─────────────────────────────────────────────────────────────────────
+# POST-DEPLOYMENT INSTRUCTIONS: USER INVITATION ACCEPTANCE WORKFLOW
+# ─────────────────────────────────────────────────────────────────────
 
 Write-Host ""
 Write-Host "                     ⚠️  IMPORTANT INFORMATION  ⚠️"                  -ForegroundColor Yellow
 Write-Host "══════════════════════════════════════════════════════════════════════"  -ForegroundColor DarkYellow
+
+# --- Critical next steps for administrators ---
+# Highlighting information that requires follow-up action
+# Following Azure best practice for clear post-deployment instructions
 Write-Host "     Please ensure that the guest invitations sent via email are      "  -ForegroundColor Yellow
 Write-Host "     accepted by the recipients. This step is required to enable      "  -ForegroundColor Yellow
 Write-Host "     access to the resources and functionality provided by the        "  -ForegroundColor Yellow
 Write-Host "     access package.                                                  "  -ForegroundColor Yellow
 Write-Host ""
+
+# --- User experience expectations and portal reference ---
+# Providing end-user information for onboarding guidance
+# Following Azure best practice for end-user documentation
 Write-Host "     Once the invitation is accepted, users will be able to see       "  -ForegroundColor Gray
 Write-Host "     and access the assigned resources in their My Apps portal:       "  -ForegroundColor Gray
 Write-Host "     https://myapplications.microsoft.com                            "  -ForegroundColor Cyan
 Write-Host ""
+
+# --- Process clarification to prevent unnecessary troubleshooting ---
+# Setting correct expectations for access timing
+# This aligns with Azure best practice for change management communication
 Write-Host "     This is expected behavior and does not require troubleshooting. "  -ForegroundColor Gray
 Write-Host "══════════════════════════════════════════════════════════════════════"  -ForegroundColor DarkYellow
 Write-Host ""
 
+# --- Final script completion message ---
+# Clear indication that automation has successfully completed
+# Following Azure best practice for automation completion notification
 Write-Host "`n[SUCCESS] Script finished." -ForegroundColor Green
 
+# Brief pause for message visibility before exit prompt
+# This ensures critical information isn't immediately dismissed
 Start-Sleep -Seconds 1
 
+# Interactive exit to allow reading output before closing
+# Following Azure best practice for interactive scripts
 Read-Host "Press any key to exit"

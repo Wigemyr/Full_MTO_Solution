@@ -1,6 +1,6 @@
 <#
 Author          : Bakken, Anders Wigemyr
-Date            : 29-04-2025
+Date            : 15-05-2025
 Version         : 1.0
 Description     : Automates the following steps:
                 1. Validates PowerShell version (requires 7+)
@@ -18,6 +18,22 @@ Note            : Requires PowerShell 7+. Must be run with elevated permissions 
 Script execution: onboarding_Lighthouse.ps1
 Attachments     : subscription.json, subscription.parameters.json, offboarding_Lighthouse.ps1
                   
+Security        : This script requires Owner role on subscriptions and Global Administrator role in Entra ID
+                  for full functionality. Following Azure RBAC least-privilege principle, it will attempt
+                  to proceed with reduced functionality if Global Admin rights are not present.
+
+Error handling  : Implements robust error handling with clear user feedback and diagnostic information
+                  for troubleshooting failed deployments or permission issues.
+
+Compliance      : Follows Azure Cloud Adoption Framework best practices for multi-tenant delegated
+                  resource management with clear documentation of delegation relationships.
+
+Verification    : Automatically verifies deployment success with detailed reporting of Lighthouse
+                  registration status and assigned roles.
+
+References      : - Azure Lighthouse documentation: https://docs.microsoft.com/en-us/azure/lighthouse/
+                  - ARM template reference: https://docs.microsoft.com/en-us/azure/templates/
+                  - Azure RBAC best practices: https://docs.microsoft.com/en-us/azure/role-based-access-control/best-practices
 #>
 
 
@@ -33,12 +49,8 @@ $paramsFile         = ".\templates\subscription.parameters.json"    # Path to AR
 $location           = "norwayeast"                                  # Azure region for deployments - change if needed
 
 # Group settings
-$GroupDisplayName   = "MTO-LH-TEST"                                    # Display name of the PoC group
-$GroupRoleName      = "Contributor"                                # Role assigned to the PoC group
-
-# Other settings
-$requiredRole       = "Owner"                                       # Required role for onboarding - only "Owner" is supported - can be deleted if not needed
-
+$GroupDisplayName   = "<Group displayname from 'management tenant'>"      # Display name of the PoC group
+$GroupRoleName      = "<Role displayname ex.: Contributor/Reader...>"     # Role assigned to the PoC group
 
 
 
@@ -628,15 +640,3 @@ else {
 Write-Host ""
 Write-Host "┌────────────────────────────────────────────────────────────┐" -ForegroundColor Green
 Write-Host "│                   FINAL SUCCESS MESSAGE                    │" -ForegroundColor Green
-Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "[INFO] Azure Lighthouse onboarding complete!" -ForegroundColor Green
-Write-Host "[INFO] Subscriptions can now be managed from Management Tenant through Azure Lighthouse in the Azure Portal" -ForegroundColor Green
-
-# Wait for the user to acknowledge before exiting
-Read-Host -Prompt "Press Enter to exit"
-
-
-
-
