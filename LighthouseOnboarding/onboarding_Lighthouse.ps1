@@ -18,22 +18,6 @@ Note            : Requires PowerShell 7+. Must be run with elevated permissions 
 Script execution: onboarding_Lighthouse.ps1
 Attachments     : subscription.json, subscription.parameters.json, offboarding_Lighthouse.ps1
                   
-Security        : This script requires Owner role on subscriptions and Global Administrator role in Entra ID
-                  for full functionality. Following Azure RBAC least-privilege principle, it will attempt
-                  to proceed with reduced functionality if Global Admin rights are not present.
-
-Error handling  : Implements robust error handling with clear user feedback and diagnostic information
-                  for troubleshooting failed deployments or permission issues.
-
-Compliance      : Follows Azure Cloud Adoption Framework best practices for multi-tenant delegated
-                  resource management with clear documentation of delegation relationships.
-
-Verification    : Automatically verifies deployment success with detailed reporting of Lighthouse
-                  registration status and assigned roles.
-
-References      : - Azure Lighthouse documentation: https://docs.microsoft.com/en-us/azure/lighthouse/
-                  - ARM template reference: https://docs.microsoft.com/en-us/azure/templates/
-                  - Azure RBAC best practices: https://docs.microsoft.com/en-us/azure/role-based-access-control/best-practices
 #>
 
 
@@ -49,8 +33,8 @@ $paramsFile         = ".\templates\subscription.parameters.json"    # Path to AR
 $location           = "norwayeast"                                  # Azure region for deployments - change if needed
 
 # Group settings
-$GroupDisplayName   = "<Group displayname from 'management tenant'>"      # Display name of the PoC group
-$GroupRoleName      = "<Role displayname ex.: Contributor/Reader...>"     # Role assigned to the PoC group
+$GroupDisplayName   = "<Group displayname from 'management tenant'>"      # Display name of the entra ID group in the management tenant
+$GroupRoleName      = "<Role displayname ex.: Contributor/Reader...>"     # Role name of the group in the management tenant
 
 
 
@@ -198,7 +182,7 @@ Write-Host "[SUCCESS] Signed into Azure." -ForegroundColor Green
 
 Write-Host ""
 Write-Host "┌────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "│           CHECKING GLOBAL ADMINISTRATOR ROLE IN ENTRA ID           │" -ForegroundColor Cyan
+Write-Host "│           CHECKING GLOBAL ADMINISTRATOR ROLE IN ENTRA ID   │" -ForegroundColor Cyan
 Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 Write-Host ""
 
@@ -230,7 +214,7 @@ try {
         Write-Host "[WARNING] User is NOT a Global Administrator." -ForegroundColor Yellow
         Write-Host ""
         $proceed = Read-Host "Do you still wish to proceed without Global Administrator rights? (Y/N)"
-        if ($proceed -notmatch '^[Yy]') {
+        if ($proceed -notmatch '^[Yy]') { 
             Write-Host ""
             Write-Host "═════════════════════════════════════════════════════════════════════════════" -ForegroundColor Red
             Write-Host "   ABORTED: User chose not to proceed without Global Administrator rights." -ForegroundColor Red
@@ -567,8 +551,8 @@ $report = Get-AzManagedServicesDefinition `
         $roleObj  = Get-AzRoleDefinition -Id $guid -ErrorAction SilentlyContinue
         $roleName = if ($roleObj) { $roleObj.Name } else { '<unknown>' }
     
-        # Determine PoCGruppeStatus
-        $pocGruppeStatus = if ($auth.PrincipalIdDisplayName -eq "$GroupDisplayName" -and $roleName -eq $GroupRoleName) {
+        # Determine groupStatus
+        $groupStatus = if ($auth.PrincipalIdDisplayName -eq "$GroupDisplayName" -and $roleName -eq $GroupRoleName) {
             "$GroupDisplayName has $GroupRoleName access"
         } else {
             "$GroupDisplayName does not have $GroupRoleName access"
@@ -585,7 +569,7 @@ $report = Get-AzManagedServicesDefinition `
             PrincipalName        = $auth.PrincipalIdDisplayName
             RoleDefinitionId     = $auth.RoleDefinitionId
             RoleName             = $roleName
-            PoCGruppeStatus      = $pocGruppeStatus
+            GroupStatus          = $groupStatus
         }
     }
 }
@@ -607,7 +591,7 @@ if ($report) {
             OfferName           = $_.OfferName
             PrincipalName       = $_.PrincipalName
             RoleName            = $_.RoleName
-            PoCGruppeStatus     = $_.PoCGruppeStatus
+            GroupStatus         = $_.groupStatus
         }
 
         foreach ($label in $fields.Keys) {
@@ -640,3 +624,15 @@ else {
 Write-Host ""
 Write-Host "┌────────────────────────────────────────────────────────────┐" -ForegroundColor Green
 Write-Host "│                   FINAL SUCCESS MESSAGE                    │" -ForegroundColor Green
+Write-Host "└────────────────────────────────────────────────────────────┘" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "[INFO] Azure Lighthouse onboarding complete!" -ForegroundColor Green
+Write-Host "[INFO] Subscriptions can now be managed from Management Tenant through Azure Lighthouse in the Azure Portal" -ForegroundColor Green
+
+# Wait for the user to acknowledge before exiting
+Read-Host -Prompt "Press Enter to exit"
+
+
+
+
